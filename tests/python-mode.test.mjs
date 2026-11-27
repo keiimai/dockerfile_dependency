@@ -157,8 +157,36 @@ test("reports a missing package, a wheel shortage, and contradictory versions di
   assert.equal(incompatible.nodes.find(({name}) => name === "shared").status, "conflict");
   const absent = await fixture({first: [release("first", "1.0")]}, ["first", "absent"]);
   assert.equal(absent.nodes.find(({name}) => name === "absent").status, "missing");
+  assert.equal(absent.nodes.find(({name}) => name === "first").status, "ok");
   const sdist = await fixture({first: [release("first", "1.0", {tags:"cp314-cp314-manylinux_2_39_aarch64"})]}, ["first"]);
-  assert.equal(sdist.nodes[0].status, "pending");
+  assert.equal(sdist.nodes[0].status, "no-wheel");
+});
+
+test("a source-only input does not interrupt a separate wheel dependency graph", async () => {
+  const filename = "source_only-1.0.tar.gz";
+  const distribution = {file: {filename, url: wheelHost + filename, hashes: {sha256: hash(filename)},
+    "requires-python": ">=3.12", yanked: false}};
+  const result = await fixture({
+    sample: [release("sample", "1.0", {deps: ["helper"]})],
+    "source-only": [distribution],
+    helper: [release("helper", "1.0")],
+  }, ["sample", "source-only"]);
+  assert.equal(result.ready, false);
+  assert.deepEqual(result.nodes.map(({name, status}) => [name, status]),
+    [["sample", "ok"], ["source-only", "source"], ["helper", "ok"]]);
+  assert.equal(result.nodes[1].sourceDistribution.filename, filename);
+});
+
+test("retains an individual result when another wheel has an unresolved indirect dependency", async () => {
+  const result = await fixture({
+    first: [release("first", "1.0", {deps: ["absent"]})],
+    second: [release("second", "1.0", {deps: ["helper"]})],
+    helper: [release("helper", "1.0")],
+  }, ["first", "second"]);
+  assert.equal(result.ready, false);
+  assert.equal(result.nodes.find(({name}) => name === "absent").status, "missing");
+  assert.deepEqual(result.individual.map(({root, nodes}) => [root, nodes.map(({name}) => name)]),
+    [["second", ["second", "helper"]]]);
 });
 
 test("refuses a wheel when its Core Metadata digest does not match", async () => {

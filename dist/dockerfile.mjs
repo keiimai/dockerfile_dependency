@@ -1,6 +1,6 @@
-import { TARGETS } from "./targets.mjs";
+import { TARGETS } from "./targets.mjs?v=dependency-evidence-1";
 
-import catalog from "./runtime-catalog.mjs";
+import catalog from "./runtime-catalog.mjs?v=dependency-evidence-1";
 
 export const VERSIONS = rVersions("noble");
 
@@ -64,15 +64,24 @@ function aptLayer(apt, bootstrapCertificates = false) {
     "SH"];
 }
 
-export function dockerfileBlockers({language, base, r, python, apt}) {
+export function dockerfileBlockers({language, base, r, python, apt, ubuntuRequested}) {
   const reasons = [];
   const isPython = language === "python";
   const runtime = isPython ? python : r;
   if (base.status !== "ok") reasons.push(base.detail);
-  if (!runtime.ready) reasons.push((isPython ? "Python" : "R") + " の依存関係を確定できません。依存一覧で判定を確認してください。");
+  if (!runtime.ready) {
+    const problems = (runtime.nodes ?? []).filter((node) =>
+      (node.status !== "ok" && node.status !== "unresolved") || node.conditionStatus);
+    for (const node of problems.slice(0, 3)) {
+      reasons.push((isPython ? "Python " : "R ") + node.name + " — " +
+        (node.conditionDetail ?? node.detail ?? "依存関係を確定できません。"));
+    }
+    if (!problems.length || problems.length > 3) reasons.push("依存一覧で未確定の項目を確認してください。");
+  }
+  if (!apt && ubuntuRequested?.length) reasons.push("Ubuntu 索引が利用できず、指定した Ubuntu パッケージを確認できません。");
   if (apt?.plan && apt.plan.status !== "ok") {
-    reasons.push(apt.plan.status === "conflict" ? "Ubuntu パッケージの固定候補が競合しています。"
-      : "Ubuntu パッケージの組み合わせを公式 APT 索引で確認できません。");
+    const issues = apt.issues?.slice(0, 3).map(({text}) => text);
+    reasons.push(...(issues?.length ? issues : [apt.plan.text ?? "Ubuntu の必須要件を確定できません。"]));
   }
   if (wrongAptRelease(base, apt)) reasons.push("Ubuntu の対象リリースと APT 索引が一致しません。");
   if (!isPython || base.status !== "ok" || (apt?.plan && apt.plan.status !== "ok")) return reasons;

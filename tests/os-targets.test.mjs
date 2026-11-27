@@ -15,6 +15,7 @@ test("uses a separate official index and fixed images for each OS", async () => 
       ["noble", "resolute"].map((release) => loadAptIndex(release, catalog[release].snapshot)),
     );
     assert.equal(noble.snapshot.suites[0], "noble");
+    assert(noble.libraries["libblas.so.3"].includes("libblas3"));
     assert.equal(resolute.snapshot.suites[0], "resolute");
     assert(rVersions("noble").includes("4.5.3"));
     assert(rVersions("resolute").includes("4.6.2"));

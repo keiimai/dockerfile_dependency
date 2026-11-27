@@ -1,7 +1,7 @@
 import {
   compare, meetsPythonRange, normalizePythonName, pythonEnvironment, readRequirement,
-  readWheelHeaders, valid, validPythonRange, wheelCandidate,
-} from "./python-packaging.mjs?v=os-1";
+  readWheelHeaders, sourceCandidate, valid, validPythonRange, wheelCandidate,
+} from "./python-packaging.mjs?v=dependency-evidence-1";
 
 export const PYPI = "https://pypi.org/simple/";
 const indexUrl = (name) => PYPI + encodeURIComponent(name) + "/";
@@ -24,7 +24,9 @@ async function wheelsFor(name, version, glibc) {
     const wheels = index.files.map((file) => wheelCandidate(file, name, version, glibc)).filter(Boolean);
     wheels.sort((a, b) => compare(b.version, a.version) ||
       Number(Boolean(b.metadata)) - Number(Boolean(a.metadata)) || b.rank - a.rank);
-    return {wheels};
+    const sources = index.files.map((file) => sourceCandidate(file, name, version)).filter(Boolean)
+      .sort((a, b) => compare(b.version, a.version));
+    return {wheels, sources};
   } catch (error) {
     return {status: "fetch", detail: "PyPI 索引の取得失敗 — " + error.message};
   }
@@ -116,14 +118,43 @@ function dependencyGraph(roots, selected, environment) {
 
 const meets = (version, incoming) => incoming.every(({condition}) => meetsPythonRange(version, condition));
 
+function noWheel(index, incoming) {
+  const source = index.sources.find((file) => meets(file.version, incoming));
+  if (source) {
+    return {status: "source", sourceDistribution: source,
+      detail: "対象環境に合う wheel がなく、ソース配布物からのビルドが必要です。" +
+        (source.requiresPython ? "" : " Python の版条件はソースの公開索引で確認できません。")};
+  }
+  return {status: "no-wheel", detail: "対象環境と版条件に合う非撤回の安定版 wheel が見つかりません。"};
+}
+
+function resultNodes(roots, {selected, graph, name: failed, issue}, rootFailures = new Map()) {
+  return [...new Set([...roots, ...graph.entries.keys()])].map((name) => {
+    const entry = graph.entries.get(name);
+    const node = selected.get(name);
+    const parents = [...(entry?.incoming.values() ?? [])];
+    const result = rootFailures.get(name) ?? (name === failed ? issue : graph.issues.get(name));
+    return {
+      name, index: indexUrl(name), ...node, status: result?.status ?? node?.status ?? "unresolved",
+      detail: result?.detail ?? (!node ? "全体の組み合わせを確定できなかったため、この経路は未確定です。" : undefined),
+      metadata: result?.metadata ?? node?.metadata,
+      sourceDistribution: result?.sourceDistribution,
+      relation: roots.includes(name) ? "入力" : parents.some(({parent}) => roots.includes(parent)) ? "直接" : "間接",
+      incoming: parents.map((req) => ({...req,
+        status: node ? meets(node.version, [req]) ? "ok" : "conflict" : "pending"})),
+      extras: [...(entry?.extras ?? [])], deps: graph.deps.get(name) ?? [],
+    };
+  });
+}
+
 export async function inspectPython(roots, version, progress, glibc = 39) {
   const environment = pythonEnvironment(version);
   const indexes = new Map();
   const metadata = new Map();
   let decisions = 0;
 
-  async function search(selected) {
-    const graph = dependencyGraph(roots, selected, environment);
+  async function search(activeRoots, selected) {
+    const graph = dependencyGraph(activeRoots, selected, environment);
     const failure = (name, issue) => ({selected, graph, name, issue});
     const unresolved = [];
     for (const [name, entry] of graph.entries) {
@@ -141,7 +172,7 @@ export async function inspectPython(roots, version, progress, glibc = 39) {
     }
     if (!unresolved.length) return {selected, graph};
     const name = unresolved[0];
-    if (++decisions > decisionsLimit || metadata.size >= requestsLimit || graph.entries.size > 256) {
+    if (++decisions > decisionsLimit || graph.entries.size > 256) {
       return failure(name, {status: "pending", limited: true, detail: "組み合わせを確認する探索が上限に達しました。"});
     }
     if (!indexes.has(name)) indexes.set(name, wheelsFor(name, version, glibc));
@@ -154,7 +185,7 @@ export async function inspectPython(roots, version, progress, glibc = 39) {
         incoming.every((req) => index.wheels.some((wheel) => meets(wheel.version, [req])));
       return failure(name, conflict
         ? {status: "conflict", detail: "対象環境の公開 wheel に、すべての版条件を満たす候補がありません。"}
-        : {status: "pending", detail: "対象の Python 版と版条件に合う非撤回の安定版 wheel を確認できません。"});
+        : noWheel(index, incoming));
     }
 
     let firstFailure;
@@ -168,7 +199,7 @@ export async function inspectPython(roots, version, progress, glibc = 39) {
       }
       const node = await metadata.get(wheel.url);
       const outcome = node.status === "ok"
-        ? await search(new Map([...selected, [name, node]]))
+        ? await search(activeRoots, new Map([...selected, [name, node]]))
         : failure(name, node);
       if (!outcome.issue || outcome.issue.limited || outcome.issue.status === "fetch") return outcome;
       if (!firstFailure || (firstFailure.issue.status === "conflict" && outcome.issue.status !== "conflict")) {
@@ -178,28 +209,26 @@ export async function inspectPython(roots, version, progress, glibc = 39) {
     return firstFailure;
   }
 
+  const rootFailures = new Map();
   for (const name of roots) indexes.set(name, wheelsFor(name, version, glibc));
-  const rootIndexes = await Promise.all(indexes.values());
-  const unavailable = rootIndexes.findIndex((index) => index.status);
-  const first = unavailable < 0 ? await search(new Map()) : {
-    selected: new Map(), graph: dependencyGraph(roots, new Map(), environment),
-    name: roots[unavailable], issue: rootIndexes[unavailable],
+  await Promise.all(roots.map(async (name) => {
+    const index = await indexes.get(name);
+    if (index.status) rootFailures.set(name, index);
+    else if (!index.wheels.length) rootFailures.set(name, noWheel(index, []));
+  }));
+
+  const active = roots.filter((name) => !rootFailures.has(name));
+  const first = await search(active, new Map());
+  const individual = [];
+  if (first.issue && active.length > 1 && !first.issue.limited) {
+    for (const name of active) {
+      const single = await search([name], new Map());
+      if (!single.issue) individual.push({root: name, nodes: resultNodes([name], single)});
+      if (decisions >= decisionsLimit) break;
+    }
+  }
+  return {
+    nodes: resultNodes(roots, first, rootFailures), order: [...first.selected.keys()],
+    ready: !rootFailures.size && !first.issue, cycles: [], environment, individual,
   };
-  const {selected, graph, name: failed, issue} = first;
-  const nodes = [...graph.entries].map(([name, entry]) => {
-    const {incoming, extras} = entry;
-    const node = selected.get(name);
-    const parents = [...incoming.values()];
-    const result = name === failed ? issue : graph.issues.get(name);
-    return {
-      name, index: indexUrl(name), ...node, status: result?.status ?? node?.status ?? "pending",
-      detail: result?.detail ?? (!node ? "依存の判定を継続できませんでした。" : undefined),
-      metadata: result?.metadata ?? node?.metadata,
-      relation: roots.includes(name) ? "入力" : parents.some(({parent}) => roots.includes(parent)) ? "直接" : "間接",
-      incoming: parents.map((req) => ({...req,
-        status: node ? meets(node.version, [req]) ? "ok" : "conflict" : "pending"})),
-      extras: [...extras], deps: graph.deps.get(name) ?? [],
-    };
-  });
-  return {nodes, order: [...selected.keys()], ready: !issue, cycles: [], environment};
 }

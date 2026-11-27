@@ -1,8 +1,8 @@
-import { inspectApt } from "./apt-resolver.mjs?v=catalog-1";
-import { pythonAptPackages, selectPythonBase } from "./dockerfile.mjs?v=python-custom-1";
-import { inspectPython } from "./python-resolver.mjs?v=os-1";
-import catalog from "./runtime-catalog.mjs";
-import { TARGETS } from "./targets.mjs";
+import { inspectApt } from "./apt-resolver.mjs?v=dependency-evidence-1";
+import { pythonAptPackages, selectPythonBase } from "./dockerfile.mjs?v=dependency-evidence-1";
+import { inspectPython } from "./python-resolver.mjs?v=dependency-evidence-1";
+import catalog from "./runtime-catalog.mjs?v=dependency-evidence-1";
+import { TARGETS } from "./targets.mjs?v=dependency-evidence-1";
 
 export async function inspectPythonTarget({requested, version, ubuntuRequested, release, index, progress}) {
   const target = TARGETS[release];

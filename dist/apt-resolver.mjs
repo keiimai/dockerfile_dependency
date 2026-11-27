@@ -1,4 +1,4 @@
-import { TARGETS } from "./targets.mjs";
+import { TARGETS } from "./targets.mjs?v=dependency-evidence-1";
 import { matches } from "./r-resolver.mjs";
 
 export const APT_NAME = /^[a-z0-9][a-z0-9+.-]*$/;
@@ -145,28 +145,94 @@ const common = [
   ["(?:lib)?udunits-?2", "libudunits2-dev"], ["cmake", "cmake"],
   ["openssl", "libssl-dev"], ["abseil", "libabsl-dev"], ["libxml2", "libxml2-dev"],
   ["zlib", "zlib1g-dev"], ["libpng", "libpng-dev"], ["libjpeg", "libjpeg-dev"],
-  ["libtiff", "libtiff-dev"], ["libgit2", "libgit2-dev"], ["libpq", "libpq-dev"],
+  ["libtiff", "libtiff-dev"], ["libwebp(?:mux|demux)?", "libwebp-dev"], ["gnu make|make", "make"], ["libgit2", "libgit2-dev"], ["libpq", "libpq-dev"],
   ["libicu", "libicu-dev"], ["cairo", "libcairo2-dev"], ["fontconfig", "libfontconfig1-dev"],
   ["freetype2?", "libfreetype-dev"], ["harfbuzz", "libharfbuzz-dev"], ["fribidi", "libfribidi-dev"],
   ["netcdf", "libnetcdf-dev"], ["hdf5", "libhdf5-dev"], ["pkg-config", "pkg-config"], ["ninja", "ninja-build"],
 ].map(([term, name]) => ({
-  exact: new RegExp("^" + term + "$", "i"), advisory: new RegExp("\\b" + term + "\\b", "i"), name,
+  exact: new RegExp("^(?:" + term + ")$", "i"), advisory: new RegExp("\\b(?:" + term + ")\\b", "i"), name,
 }));
 
-function guessRequirement(text, index) {
-  const match = text.match(/^([A-Za-z0-9.+-]+)\s*(?:\(?\s*(>=|<=|==|>|<|=)\s*(\d+(?:[.-]\d+)+)\s*\)?)?$/);
+function guessRequirement(text, index, hints = []) {
+  const ubuntuText = text.replace(/\s+-\s+https?:\/\/\S+$/i, "").replace(/\s*\((?:deb|debian|ubuntu)\)\s*$/i, "");
+  const prescribed = ubuntuText.match(/^[^:]+:\s*([a-z0-9][a-z0-9+.-]*)$/);
+  if (prescribed && /\((?:deb|debian|ubuntu)\)$/i.test(text) && index.real.has(prescribed[1])) {
+    return {names: [prescribed[1]], specified: true};
+  }
+  if (/^a system with zoneinfo data\b/i.test(ubuntuText) && ubuntuText.includes("/usr/share/zoneinfo")) {
+    return {names: ["tzdata"], specified: true};
+  }
+  const match = ubuntuText.match(/^([A-Za-z0-9.+-]+(?:\s+make)?)\s*(?:\(?\s*(>=|<=|==|>|<|=)\s*(\d+(?:[.-]\d+)*)\s*\)?)?$/i);
   if (match) {
     const [, term, operator, version] = match;
     const rule = common.find((entry) => entry.exact.test(term));
-    if (rule) return { names: [rule.name], operator, version, auto: true };
+    if (rule || index.real.has(term)) return {names: [rule?.name ?? term], operator, version, specified: true};
     if (/^libcurl$/i.test(term)) {
-      return { names: ["libcurl4-openssl-dev", "libcurl4-gnutls-dev"], operator, version };
+      const alternatives = ["libcurl4-openssl-dev", "libcurl4-gnutls-dev"];
+      const matched = alternatives.filter((name) => hints.includes(name));
+      return {names: matched.length === 1 ? matched : alternatives, alternatives, operator, version, specified: true};
     }
+    if (/^lib[a-z0-9]/i.test(term)) return {names: [], operator, version, specified: true};
   }
   const explicit = [...text.matchAll(/\blib[a-z0-9+.-]+-dev\b/g)].map((match) => match[0]);
   const advisory = common.filter((rule) => rule.advisory.test(text)).map((rule) => rule.name);
-  const exactIndex = APT_NAME.test(text) && index.real.has(text) ? [text] : [];
-  return { names: [...new Set([...explicit, ...advisory, ...exactIndex])] };
+  return {names: [...new Set([...explicit, ...advisory])]};
+}
+
+function splitRequirements(text, separator) {
+  const pieces = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(") depth++;
+    if (ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === separator && depth === 0) {
+      pieces.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  pieces.push(text.slice(start));
+  return pieces.map((part) => part.trim()).filter(Boolean);
+}
+
+function systemEvidence(node, index, hints) {
+  const system = (node.system ?? "").replace(/\s+/g, " ").trim();
+  const bundled = node.name === "s2" && node.version === "1.1.13" && node.distribution?.current;
+  const rows = [];
+  for (const group of splitRequirements(system, ";")) {
+    const feature = /^for\s.+\bsupport\b/i.test(group) || /\bonly for full source build\b/i.test(group);
+    const clauses = feature ? [group] : splitRequirements(group, ",");
+    for (const text of clauses) {
+      const {specified, ...guess} = guessRequirement(text, index, hints);
+      let category = "requirement";
+      let note;
+      let source;
+      if (/\((?:rpm|fedora|macos|windows)\)/i.test(text)) category = "outside";
+      else if (feature || /\boptional\b|\bonly on (?:windows|macos)\b/i.test(text)) category = "optional";
+      else if (bundled && /^abseil\b/i.test(text)) {
+        category = "bundled";
+        source = bundled;
+        note = "このソース版の Linux 既定設定では、同梱 Abseil をビルドします。";
+      } else if (node.name === "arrow" && /^C\+\+20$/i.test(text)) {
+        guess.names = ["g++"];
+        guess.operator = ">=";
+        guess.version = "10";
+        source = "https://arrow.apache.org/docs/r/articles/install.html#compilers";
+      } else if (!specified) {
+        category = /\b(?:alternatively|either|or|if|depending|recommended)\b/i.test(text) ? "reference" : "review";
+      }
+      rows.push({rPackage: node.name, kind: "SystemRequirements", text, ...guess, category, note, source,
+        required: category === "requirement"});
+    }
+  }
+  if (rows.some((row) => row.category === "bundled")) {
+    for (const name of ["make", "cmake", "pkg-config"]) {
+      rows.push({rPackage: node.name, kind: "同梱 Abseil のビルド", text: name, names: [name],
+        category: "requirement", required: true, source: bundled});
+    }
+  }
+  return rows;
 }
 
 function directEvidence(rNodes, explicit, index, required) {
@@ -177,19 +243,14 @@ function directEvidence(rNodes, explicit, index, required) {
     add(libraries, stem, { filename, owners });
   }
   for (const r of rNodes) {
-    const system = r.system ?? "";
-    const conditional = /\b(optional|alternatively|alternative|either|or|if|depending|recommended)\b/i.test(system);
-    for (const text of system.split(/[,;\n]+/).map((part) => part.trim()).filter(Boolean)) {
-      const guess = guessRequirement(text, index);
-      evidence.push({ rPackage: r.name, kind: "SystemRequirements", text, ...guess, auto: guess.auto && !conditional });
-    }
+    const hints = [...new Set((r.sysreqHint ?? "").split(/\s+/).filter((name) => APT_NAME.test(name)))];
+    evidence.push(...systemEvidence(r, index, hints));
     for (const text of r.externalRequirements ?? []) {
       const guess = guessRequirement(text, index);
-      evidence.push({rPackage: r.name, kind: "Requires-External", text, ...guess, auto: false});
+      evidence.push({rPackage: r.name, kind: "Requires-External", text, ...guess, category: "review"});
     }
-    const hints = (r.sysreqHint ?? "").split(/\s+/).filter(Boolean);
-    for (const name of new Set(hints.filter((hint) => APT_NAME.test(hint)))) {
-      evidence.push({ rPackage: r.name, kind: "Config/pak/sysreqs", text: name, names: [name] });
+    for (const name of hints) {
+      evidence.push({rPackage: r.name, kind: "Config/pak/sysreqs", text: name, names: [name], category: "reference"});
     }
     for (const lib of r.shlibs ?? []) {
       const files = lib.shlib.includes(".so")
@@ -197,11 +258,12 @@ function directEvidence(rNodes, explicit, index, required) {
         : libraries.get(lib.shlib) ?? [];
       const names = [...new Set(files.flatMap((file) => file.owners).filter((name) => index.real.has(name)))];
       const text = lib.shlib + "（観測先 " + (r.buildDistro ?? "不明") + "、報告上の提供元 " + (lib.provider ?? "不明") + "）";
-      evidence.push({ rPackage: r.name, kind: "R-universe の共有ライブラリ報告 + Ubuntu Contents", text, library: lib, files, names });
+      evidence.push({ rPackage: r.name, kind: "R-universe の共有ライブラリ報告 + Ubuntu Contents",
+        text, library: lib, files, names, category: "reference" });
     }
   }
-  for (const name of required) evidence.push({kind: "実行環境", text: name, names: [name], auto: true});
-  for (const name of explicit) evidence.push({ kind: "入力", text: name, names: [name], auto: true });
+  for (const name of required) evidence.push({kind: "実行環境", text: name, names: [name], required: true, category: "requirement"});
+  for (const name of explicit) evidence.push({kind: "入力", text: name, names: [name], required: true, category: "requirement"});
   return evidence;
 }
 
@@ -375,9 +437,6 @@ export function inspectApt(rNodes, explicit, index, required = []) {
       return real ? versions.map((item) => ({ item: item.key })) : resolves(parse(name), index);
     });
     row.available.forEach(({item}) => visit(item));
-    const nameCount = new Set(row.available.map(({item}) => index.byKey.get(item).name)).size;
-    row.status = !nameCount ? "pending" : nameCount > 1 ? "alternative" :
-      row.auto && index.real.has(row.names[0]) ? "ok" : "review";
   }
 
   const nodes = new Map();
@@ -393,24 +452,47 @@ export function inspectApt(rNodes, explicit, index, required = []) {
 
   const impossible = impossibleBranches(nodes);
   const roots = new Map();
-  const issues = [];
+  const rootNames = new Map();
+  const problems = new Map();
+  const explicitNames = new Set(explicit);
   for (const row of evidence) {
-    if (!row.auto || !index.real.has(row.names[0])) continue;
-    const choices = row.available.map(({item}) => item);
-    if (!choices.some((key) => !impossible.has(key))) row.status = "pending";
-    const name = row.names[0];
+    if (!row.required) continue;
+    const valid = row.available.filter(({item}) => !impossible.has(item));
+    const names = new Set(valid.map(({item}) => nodes.get(item).name));
+    const explicitProviders = [...names].filter((name) => explicitNames.has(name));
+    if (names.size > 1 && explicitProviders.length === 1) {
+      names.clear();
+      names.add(explicitProviders[0]);
+    }
+    if (names.size !== 1) {
+      const subject = row.names.join("、") || row.text;
+      let reason;
+      if (names.size > 1) reason = "必須の " + subject + " に複数の提供元があります。Ubuntu パッケージ名を指定してください。";
+      else if (row.kind === "入力" && !row.available.length) reason = "指定した " + subject + " は対象の Ubuntu 索引に見つかりません。";
+      else reason = "必須の " + subject + (row.operator ? "（" + row.operator + " " + row.version + "）" : "") +
+        " を満たす Ubuntu パッケージを確認できません。";
+      row.status = row.kind === "入力" && !row.available.length ? "missing" : "pending";
+      problems.set(reason, {status: row.status, text: reason});
+      continue;
+    }
+    const name = names.values().next().value;
+    rootNames.set(row, name);
+    const choices = valid.map(({item}) => item).filter((key) => nodes.get(key).name === name);
     const previous = roots.get(name);
     roots.set(name, previous ? previous.filter((key) => choices.includes(key)) : choices);
   }
-
   for (const [name, choices] of roots) {
-    if (choices.some((key) => !impossible.has(key))) continue;
-    issues.push({ status: "pending", text: name + " の指定条件を同時に満たす版を索引で確認できません。" });
-    roots.delete(name);
+    if (choices.length) continue;
+    const text = name + " の必須版条件を同時に満たす Ubuntu パッケージがありません。";
+    problems.set(text, {status: "conflict", text});
   }
 
-  const {selection, ...plan} = findCombination(roots, nodes, impossible, index);
-  if (plan.status !== "ok") issues.unshift(plan);
+  const issues = [...problems.values()];
+  const outcome = issues.length
+    ? {status: issues.some(({status}) => status === "conflict") ? "conflict" : "pending", text: issues[0].text}
+    : findCombination(roots, nodes, impossible, index);
+  const {selection, ...plan} = outcome;
+  if (!issues.length && plan.status !== "ok") issues.push(plan);
   const pins = new Map();
   if (selection) {
     for (const name of roots.keys()) {
@@ -418,17 +500,27 @@ export function inspectApt(rNodes, explicit, index, required = []) {
       pins.set(key, {name, version, key, locations});
     }
   }
+  const selected = new Set(selection?.values());
   for (const row of evidence) {
-    row.included = row.status === "ok" && row.available.some(({item}) => pins.has(item));
+    row.coveredBy = row.available.map(({item}) => item).filter((key) => selected.has(key));
+    row.coveredBy = [...new Set(row.coveredBy)].sort((a, b) => Number(pins.has(b)) - Number(pins.has(a)) || a.localeCompare(b));
+    row.included = Boolean(row.required && selection?.has(rootNames.get(row)));
+    if (row.status) continue;
+    if (row.required) row.status = row.included ? "ok" : roots.get(rootNames.get(row))?.length ? "candidate" : "conflict";
+    else if (["optional", "outside", "bundled"].includes(row.category)) row.status = row.category;
+    else if (row.coveredBy.length) row.status = "covered";
+    else if (row.category === "review") row.status = "review";
+    else row.status = "reference";
   }
   const direct = new Set(evidence.flatMap((row) => row.available.map(({item}) => item)));
   const records = [...nodes.values()].map((node) => ({
-    ...node, relation: direct.has(node.key) ? "候補元" : "依存先",
+    ...node, relation: direct.has(node.key) ? "候補元" : "依存先", selected: selected.has(node.key),
     baseState: "導入済みか未確認", status: impossible.has(node.key) ? "pending" : "ok",
     constraints: node.constraints.map((constraint) => {
       const available = new Set(constraint.alternatives.flatMap(({candidates}) =>
         candidates.filter(({item}) => !impossible.has(item)).map(({item}) => nodes.get(item).name)));
-      return { ...constraint, status: !available.size || constraint.pending ? "pending" :
+      return { ...constraint, status: constraint.alternatives.some(({candidates}) => candidates.some(({item}) => selected.has(item))) && selected.has(node.key) ? "ok" :
+        !available.size || constraint.pending ? "pending" :
         available.size > 1 ? "alternative" : "ok" };
     }),
   }));

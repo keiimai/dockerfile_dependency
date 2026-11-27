@@ -133,6 +133,27 @@ function platformRank(tag, glibc) {
   return match && Number(match[1]) >= 17 && Number(match[1]) <= glibc ? 100 + Number(match[1]) : 0;
 }
 
+function publicDistribution(file, version) {
+  const {filename, url, hashes} = file;
+  if (typeof url !== "string" || !/^https:\/\/files\.pythonhosted\.org\/packages\/[A-Za-z0-9._%+!\/-]+$/.test(url) ||
+      !url.endsWith("/" + filename) || !/^[a-f0-9]{64}$/i.test(hashes?.sha256 ?? "")) return null;
+  return {filename, url, version, sha256: hashes.sha256.toLowerCase(), requiresPython: file["requires-python"] ?? null};
+}
+
+function supportsPython(file, pythonVersion) {
+  const condition = file["requires-python"];
+  return !condition || (validPythonRange(condition) && meetsPythonRange(pythonVersion, condition));
+}
+
+export function sourceCandidate(file, project, pythonVersion) {
+  if (file.yanked !== false || typeof file.filename !== "string" || !supportsPython(file, pythonVersion)) return null;
+  const match = file.filename.match(/^([A-Za-z0-9_.-]+)-([A-Za-z0-9_.+!]+)\.(?:tar\.gz|zip)$/);
+  if (!match) return null;
+  const [, name, version] = match;
+  if (normalizePythonName(name) !== project || !valid(version) || explain(version).is_prerelease) return null;
+  return publicDistribution(file, version);
+}
+
 export function wheelCandidate(file, project, pythonVersion, glibc = 39) {
   const filename = file.filename;
   if (typeof filename !== "string" || !/^[A-Za-z0-9_.+!-]+\.whl$/.test(filename) || file.yanked !== false) return null;
@@ -141,8 +162,7 @@ export function wheelCandidate(file, project, pythonVersion, glibc = 39) {
   const [name, version] = parts;
   const [python, abi, platform] = parts.slice(-3);
   if (normalizePythonName(name) !== project || !valid(version) || explain(version).is_prerelease) return null;
-  if (file["requires-python"] && (!validPythonRange(file["requires-python"]) ||
-      !meetsPythonRange(pythonVersion, file["requires-python"]))) return null;
+  if (!supportsPython(file, pythonVersion)) return null;
 
   const minor = Number(pythonVersion.split(".")[1]);
   const cpTag = "cp3" + minor;
@@ -157,12 +177,9 @@ export function wheelCandidate(file, project, pythonVersion, glibc = 39) {
   const platformMatch = Math.max(...platform.split(".").map((tag) => platformRank(tag, glibc)));
   if (!abiRank || !platformMatch) return null;
 
-  const {url, hashes} = file;
-  if (typeof url !== "string" || !/^https:\/\/files\.pythonhosted\.org\/packages\/[A-Za-z0-9._%+!\/-]+$/.test(url) ||
-      !url.endsWith("/" + filename) || !/^[a-f0-9]{64}$/i.test(hashes?.sha256 ?? "")) return null;
+  const distribution = publicDistribution(file, version);
   const metadata = file["core-metadata"] ?? file["data-dist-info-metadata"];
-  return {filename, url, version, sha256: hashes.sha256.toLowerCase(), metadata, rank: abiRank + platformMatch,
-    requiresPython: file["requires-python"] ?? null};
+  return distribution && {...distribution, metadata, rank: abiRank + platformMatch};
 }
 
 export function readWheelHeaders(text) {

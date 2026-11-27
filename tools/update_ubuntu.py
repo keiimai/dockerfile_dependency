@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPONENTS = ("main", "restricted", "universe", "multiverse")
 FIELDS = ("Package", "Version", "Architecture", "Depends", "Pre-Depends",
           "Provides", "Multi-Arch", "Conflicts", "Breaks", "Source")
-LIBRARY = re.compile(rb"^(?:usr/)?lib/(?:aarch64-linux-gnu/)?(lib[^/\s]+\.so(?:\.[^/\s]+)?)$")
+LIBRARY = re.compile(rb"^(?:usr/)?lib/(?:aarch64-linux-gnu/(?:[^/\s]+/)*)?(lib[^/\s]+\.so(?:\.[^/\s]+)?)$")
 PACKAGE = re.compile(rb"[a-z0-9][a-z0-9+.-]*")
 
 

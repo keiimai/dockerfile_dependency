@@ -24,9 +24,9 @@ R または Python のパッケージが必要とする依存関係を調べ、U
 
 ## 結果を見る
 
-- **確認** は、取得したメタデータや索引で条件を確認できたことを示します。Ubuntu の候補が複数ある場合や、候補を特定できない場合は、画面と調査記録に確認事項を表示します。
-- **判定保留** には、対応する配布物が見つからない場合や、メタデータが不足している場合などがあります。依存の競合や、対象のベースを確定できない場合にも、理由を表示します。Dockerfile の生成を保留した場合も、調査記録は保存できます。
-- **見つからない** と **取得失敗** は別の表示です。入力したパッケージ名とネットワーク接続を確認してください。
+- **確認** は、取得したメタデータや索引で条件を確認できたことを示します。Ubuntu の必須要件は、採用するパッケージごとに根拠をまとめます。別のOSでの共有ライブラリ報告や任意機能は詳細欄で確認できます。
+- **判定保留** は、メタデータ不足などで必須の条件を確定できない場合に表示します。指定した Ubuntu パッケージが見つからない場合など、Dockerfile を生成できないときはダウンロード欄に理由が表示されます。調査記録は保存できます。
+- Python で **ソースビルドが必要** と出た場合は、対応する wheel がなく、PyPI にソース配布物があります。他の入力で確認できた依存は引き続き表示します。**見つからない**、**取得失敗**、**対応 wheel なし** もそれぞれ区別します。
 
 ### 対象と制約
 
@@ -40,6 +40,6 @@ R または Python のパッケージが必要とする依存関係を調べ、U
 公開サイトは `main` ブランチの静的ファイルをGitHub Pagesで配信しています。定期ワークフローは2026年11月30日を起点に、隔週月曜の12:37 JST（03:37 UTC）に公式配布元を確認します。対象週以外は外部データの取得やデプロイを省略します。Pythonの実行環境に関係するUbuntuパッケージが変わったときと、索引が28日以上経過したときに、APT索引全体を取り直します。索引とバージョン一覧は検証に通った組み合わせを公開します。取得や検証に失敗した場合は直前の公開版が使えます。
 
 - ローカルで画面を確認するには、リポジトリのルートで `python3 -m http.server 8765 --bind 127.0.0.1 --directory dist` を実行し、[http://127.0.0.1:8765/](http://127.0.0.1:8765/) を開きます。
-- ローカルの更新は `python3 -B tools/update_catalog.py` で実行できます。PythonとNode.jsが必要です。日時を指定して両OSの索引を再生成する例は `python3 -B tools/update_catalog.py --force-index --snapshot 20261127T183000Z` です。取得元とスナップショット日時は調査記録に含まれます。 [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
+- ローカルの更新は `python3 -B tools/update_catalog.py` で実行できます。PythonとNode.jsが必要です。日時を指定して両OSの索引を再生成する例は `python3 -B tools/update_catalog.py --force-index --snapshot 20261127T210000Z` です。取得元とスナップショット日時は調査記録に含まれます。 [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
 - 回帰テストは `node --test tests/*.test.mjs` と `python3 -B -m unittest discover -s tests -p 'test_*.py'` で実行します。
 - 更新・公開の実行結果はActionsタブに記録されます。GitHubは活動のない公開リポジトリの定期実行を60日で停止する場合があります。その場合は管理者が該当ワークフローを再有効化できます。 [GitHubの定期実行の仕様](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)

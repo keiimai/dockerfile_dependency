@@ -1,10 +1,10 @@
-import catalog from "./runtime-catalog.mjs";
-import { TARGETS } from "./targets.mjs";
-import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=catalog-1";
-import { dockerfileBlockers, makeDockerfile, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=python-custom-1";
-import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=os-1";
-import { inspectPythonTarget } from "./python-investigation.mjs?v=python-custom-1";
-import { PYPI } from "./python-resolver.mjs?v=os-1";
+import catalog from "./runtime-catalog.mjs?v=dependency-evidence-1";
+import { TARGETS } from "./targets.mjs?v=dependency-evidence-1";
+import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=dependency-evidence-1";
+import { dockerfileBlockers, makeDockerfile, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=dependency-evidence-1";
+import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=dependency-evidence-1";
+import { inspectPythonTarget } from "./python-investigation.mjs?v=dependency-evidence-1";
+import { PYPI } from "./python-resolver.mjs?v=dependency-evidence-1";
 import { CRAN, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR } from "./r-resolver.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -22,6 +22,9 @@ const reportButton = $("download-report");
 const labels = {
   ok: "確認", pending: "判定保留", review: "要確認", alternative: "複数候補",
   fetch: "取得失敗", missing: "見つからない", conflict: "競合", neutral: "未調査",
+  source: "ソースビルドが必要", "no-wheel": "対応 wheel なし", unresolved: "経路未確定",
+  candidate: "候補あり", covered: "APT 計画に候補あり", reference: "参考", outside: "対象外",
+  optional: "任意・条件付き", bundled: "ソースに同梱",
 };
 const scope = "公開メタデータの調査。Docker ビルド、パッケージの読み込み、共有ライブラリの動作確認は範囲外。";
 const modes = {
@@ -113,10 +116,7 @@ function conditionText({name, operator, version, raw}) {
   return operator ? name + " (" + operator + " " + version + ")" : name;
 }
 
-function runtimeSection(result, id, mode) {
-  const title = mode.label + " の依存";
-  const block = section(title, id + "-title");
-  block.append(element("p", result.nodes.length + " 件。依存元と版条件は各行で確認できます。", "hint"));
+function runtimeTable(result, id, label) {
   const rows = result.nodes.map((node) => {
     const evaluation = [badge(node.status === "ok" ? node.conditionStatus ?? node.status : node.status)];
     if (node.detail) evaluation.push(element("p", node.detail));
@@ -145,6 +145,11 @@ function runtimeSection(result, id, mode) {
         sources.push(artifact);
       }
     }
+    if (node.sourceDistribution) {
+      const source = element("p");
+      source.append(link(node.sourceDistribution.url, "PyPI のソース配布物 " + node.sourceDistribution.version));
+      sources.push(source);
+    }
     if (node.requiresPython) sources.push(element("p", "Requires-Python " + node.requiresPython));
     if (node.source) sources.push(element("p", node.source));
     if (node.incoming.length) {
@@ -161,7 +166,23 @@ function runtimeSection(result, id, mode) {
       [element("code", node.version ?? "—")], evaluation, sources,
     ];
   });
-  block.append(table(["パッケージ", "候補版", "判定", "根拠"], rows, title + "一覧"));
+  return table(["パッケージ", "候補版", "判定", "根拠"], rows, label);
+}
+
+function runtimeSection(result, id, mode) {
+  const title = mode.label + " の依存";
+  const block = section(title, id + "-title");
+  block.append(element("p", result.nodes.length + " 件。依存元と版条件は各行で確認できます。", "hint"),
+    runtimeTable(result, id, title + "一覧"));
+  if (result.individual?.length) {
+    const partial = details("個別の入力で確認できた依存",
+      element("p", "各パッケージを単独で調査した結果です。全体の組み合わせは未確定です。", "hint"));
+    for (const result of result.individual) {
+      partial.append(details(result.root + " の依存 " + result.nodes.length + " 件",
+        runtimeTable(result, id, result.root + " の依存一覧")));
+    }
+    block.append(partial);
+  }
   if (result.cycles.length) {
     const message = element("p");
     message.append(badge("conflict"), " 循環依存が見つかりました — " + result.cycles.join(", "));
@@ -170,29 +191,60 @@ function runtimeSection(result, id, mode) {
   return block;
 }
 
-function aptEvidence(apt, records) {
-  const pinned = new Set(apt.pins.map(({key}) => key));
-  const rows = apt.evidence.map((row) => {
-    const source = [element("p", row.rPackage ? row.rPackage + " · " + row.kind : row.kind),
-      element("p", row.text, "muted")];
-    const optionNames = new Map();
-    for (const option of row.available) {
-      const record = records.get(option.item);
-      if (!optionNames.has(record.name) || (row.included && pinned.has(option.item))) {
-        optionNames.set(record.name, record.version);
+function aptEvidenceGroups(evidence, records) {
+  const groups = new Map();
+  for (const row of evidence) {
+    const names = [...row.names].sort();
+    const key = row.coveredBy.length ? records.get(row.coveredBy[0]).name :
+      names.join("・") || row.library?.shlib || row.text;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  return [...groups.values()];
+}
+
+function aptEvidence(groups, records, label) {
+  const rows = groups.map((evidence) => {
+    const representative = evidence.find(({included}) => included) ?? evidence.find(({required}) => required) ?? evidence[0];
+    const packages = [...new Set(evidence.map(({rPackage}) => rPackage).filter(Boolean))];
+    const conditions = [...new Set(evidence.filter(({operator, required}) => operator && required)
+      .map(({operator, version}) => operator + " " + version))];
+    const caption = [...new Set(representative.names)].join("、") || representative.library?.shlib || representative.text;
+    const matched = [...new Set(evidence.flatMap(({coveredBy}) => coveredBy))];
+    const alternatives = [...new Set(evidence.flatMap(({alternatives}) => alternatives ?? []))];
+    const candidates = new Map();
+    for (const row of evidence) {
+      for (const {item} of row.available) {
+        const record = records.get(item);
+        if (!candidates.has(record.name) || matched.includes(item)) candidates.set(record.name, record.version);
       }
     }
-    const candidate = optionNames.size ? [...optionNames].map(([name, version]) => name + " " + version).join("、") :
-      row.names.length ? row.names.join("、") + "（条件に合う索引項目なし）" : "提供元を特定できません";
-    const choices = [element("p", candidate)];
-    if (row.operator) choices.push(element("p", "上流版 " + row.operator + " " + row.version, "muted"));
-    if (row.files?.length) {
-      choices.push(details("Contents のファイル", list(row.files.map(({filename, owners}) => filename + " — " + owners.join(", ")))));
+    const chosen = matched.map((key) => records.get(key)).map(({name, version}) => name + " " + version);
+    const available = chosen.length ? chosen : [...candidates].map(([name, version]) => name + " " + version);
+    const detailsList = evidence.map((row) => {
+      const entry = element("span");
+      entry.append((row.rPackage ? row.rPackage + " · " : "") + row.kind + " — " + row.text);
+      if (row.note) entry.append(" " + row.note);
+      if (row.source) entry.append(" ", link(row.source, "出典"));
+      if (row.files?.length) {
+        entry.append(details("Contents のファイル", list(row.files.map(({filename, owners}) => filename + " — " + owners.join(", ")))));
+      }
+      return entry;
+    });
+    const status = evidence.find(({status}) => ["missing", "conflict", "pending", "review"].includes(status))?.status
+      ?? representative.status;
+    const source = [element("p", caption), element("p", packages.join("、"), "muted"),
+      details("根拠 " + evidence.length + " 件", list(detailsList))];
+    const choices = [element("p", available.join("、") ||
+      (representative.status === "bundled" ? "R ソース配布物" : "索引から該当する提供元を特定できません"))];
+    if (conditions.length) choices.push(element("p", "上流版 " + conditions.join("、"), "muted"));
+    if (alternatives.length > 1) choices.push(element("p", "提供候補 " + alternatives.join("、"), "muted"));
+    if (candidates.size > available.length) {
+      choices.push(details("索引上の候補 " + candidates.size + " 件", list([...candidates].map(([name, version]) => name + " " + version))));
     }
-    const state = [badge(row.status), element("p", row.included ? "Dockerfile の直接指定に採用" : "この根拠からの自動追加なし", "muted")];
-    return [source, choices, state];
+    return [source, choices, [badge(status)]];
   });
-  return table(["根拠", "Ubuntu パッケージ候補", "判定"], rows, "Ubuntu パッケージの候補と根拠");
+  return table(["要件", "Ubuntu パッケージ候補", "判定"], rows, label);
 }
 
 function graphTable(records) {
@@ -267,8 +319,13 @@ function aptSection(apt, error) {
   block.append(details("索引の取得元と日時", element("p", "取得日時 " + snapshot.fetchedAt), list(sources)));
   block.append(element("p", "ベースイメージへの導入状況は未確認です。共有ライブラリの候補は別のビルド環境での報告を含みます。", "hint"));
   const records = new Map(apt.records.map((node) => [node.key, node]));
-  if (evidence.length) block.append(aptEvidence(apt, records));
-  else block.append(element("p", "今回取得した R メタデータに Ubuntu パッケージを特定する手掛かりはありません。", "hint"));
+  const groups = aptEvidenceGroups(evidence, records);
+  const actionable = groups.filter((group) => group.some((row) => row.required || row.status === "review"));
+  const reference = groups.filter((group) => !actionable.includes(group));
+  if (actionable.length) block.append(aptEvidence(actionable, records, "Ubuntu の必須要件と確認事項"));
+  else block.append(element("p", "追加で固定する必須の Ubuntu パッケージはありません。", "hint"));
+  if (reference.length) block.append(details("参考・任意の要件 " + reference.length + " 件",
+    aptEvidence(reference, records, "Ubuntu の参考・任意の要件")));
   for (const issue of issues) {
     const note = element("p");
     note.append(badge(issue.status), " " + issue.text);
@@ -298,10 +355,7 @@ function revisions(report) {
   ];
   reviews.push("APT の固定候補と必須依存の組み合わせを Ubuntu 索引上で確認します。ベースの導入状態と実際の APT による導入は未確認です。");
   if (aptError && language === "r") {
-    reviews.unshift("Ubuntu 索引の取得に失敗しました。APT の設定は Dockerfile に入りません。");
-  }
-  if (apt?.evidence.some((row) => row.status === "pending")) {
-    reviews.unshift("索引で提供元や条件に合う Ubuntu パッケージを確認できなかった項目があります。");
+    reviews.unshift("Ubuntu の依存を索引で照合できませんでした。");
   }
   return reviews;
 }
@@ -341,13 +395,12 @@ function render(report, dockerfile) {
   $("docker-code").textContent = dockerfile;
   dockerButton.disabled = !dockerfile;
   reportButton.disabled = false;
-  const openApt = aptError || apt?.evidence.some((row) => row.status !== "ok") ||
-    apt?.issues.length;
+  const openApt = apt?.evidence.some((row) => row.status === "review");
   const exportNote = $("export-note");
   if (!dockerfile) {
     exportNote.replaceChildren(element("strong", "Dockerfile を生成できません。"), list(report.dockerfileBlockers));
   } else {
-    exportNote.textContent = openApt ? "APT の要確認項目があります。調査記録とあわせて使用してください。"
+    exportNote.textContent = openApt ? "Ubuntu の要件に用途や提供元を確認できない項目があります。"
       : "参考例です。生成元の根拠と確認事項は調査記録で参照できます。";
   }
 
@@ -358,10 +411,12 @@ function render(report, dockerfile) {
   $("active").hidden = false;
   const states = new Set(result.nodes.flatMap(({status, conditionStatus}) => [status, conditionStatus]));
   if (states.has("fetch")) setStatus("fetch", "取得失敗あり");
-  else if (language === "python" && result.ready && !dockerfile) setStatus("review", "調査完了・Dockerfile 生成不可");
   else if (states.has("conflict") || base.status === "conflict" || result.cycles.length ||
     apt?.issues.some(({status}) => status === "conflict")) setStatus("conflict", "競合あり");
-  else if (states.has("missing")) setStatus("missing", "見つからない項目あり");
+  else if (states.has("missing") || apt?.issues.some(({status}) => status === "missing")) setStatus("missing", "見つからない項目あり");
+  else if (states.has("source")) setStatus("source", "ソースビルドが必要な項目あり");
+  else if (states.has("no-wheel")) setStatus("no-wheel", "対応 wheel がない項目あり");
+  else if (language === "python" && result.ready && !dockerfile && !aptError) setStatus("review", "調査完了・Dockerfile 生成不可");
   else if (aptError && language === "python") setStatus("fetch", "索引の取得失敗");
   else if (!result.ready || base.status !== "ok" || apt?.plan?.status === "pending") setStatus("pending", "判定保留あり");
   else if (aptError) setStatus("fetch", "索引の取得失敗");

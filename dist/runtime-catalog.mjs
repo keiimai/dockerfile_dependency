@@ -16,7 +16,7 @@ export default {
         "arm64": "sha256:1ad536779cc2354f075fd28e9a67dea895b4605def6299a3a81d555a2e4ca925"
       }
     },
-    "snapshot": "20261127T183000Z"
+    "snapshot": "20261127T210000Z"
   },
   "resolute": {
     "python": "3.14.4",
@@ -25,6 +25,6 @@ export default {
         "arm64": "sha256:563df7ef8fab73beb884ee5ddcd99c56bf3309d9aa869b2468c7fb5dcf2ef9e9"
       }
     },
-    "snapshot": "20261127T183000Z"
+    "snapshot": "20261127T210000Z"
   }
 };
