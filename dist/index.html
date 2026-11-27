@@ -30,7 +30,6 @@
       <section class="card input-card" aria-labelledby="input-title">
         <div class="card-head">
           <h2 id="input-title">調査条件</h2>
-          <button type="button" class="example" id="use-example">ggplot2 + sf を入力</button>
         </div>
         <form id="investigate">
           <div class="field">
@@ -42,8 +41,11 @@
           </div>
           <div class="field">
             <label for="r-version" id="version-label">R のバージョン</label>
-            <input id="r-version" name="r-version" placeholder="例  4.5.3" list="r-versions" pattern="[0-9]+\.[0-9]+\.[0-9]+" inputmode="decimal" required aria-describedby="base">
-            <datalist id="r-versions"></datalist>
+            <select id="r-version" name="r-version" required aria-describedby="base"></select>
+            <div id="custom-version-field" hidden>
+              <label for="custom-version">バージョンを入力</label>
+              <input id="custom-version" inputmode="decimal" aria-describedby="base" disabled>
+            </div>
             <p id="base" class="hint">R の版に応じた Rocker イメージを表示します。</p>
           </div>
 
@@ -53,11 +55,10 @@
             <p id="package-example" class="hint">改行、カンマ、空白で区切って複数指定できます。</p>
           </div>
 
-          <details class="extra">
-            <summary>Ubuntu パッケージを指定 <span class="optional">任意</span></summary>
-            <label for="apt-packages" class="sr-only">Ubuntu パッケージ名</label>
+          <div class="field">
+            <label for="apt-packages">Ubuntu パッケージ名 <span class="optional">任意</span></label>
             <textarea id="apt-packages" name="apt-packages" rows="2" placeholder="例  libgdal-dev, libudunits2-dev" spellcheck="false" autocapitalize="off"></textarea>
-          </details>
+          </div>
 
           <p id="input-error" class="form-error" role="alert" hidden></p>
           <button type="submit" class="primary submit" id="submit">調査する</button>

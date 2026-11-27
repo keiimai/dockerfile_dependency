@@ -7,9 +7,9 @@ import { CRAN, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR } from "./r-resolver.
 const $ = (id) => document.getElementById(id);
 const form = $("investigate");
 const submit = $("submit");
-const exampleButton = $("use-example");
 const language = $("language");
 const runtimeVersion = $("r-version");
+const customVersion = $("custom-version");
 const packages = $("packages");
 const aptPackages = $("apt-packages");
 const results = $("results");
@@ -364,15 +364,28 @@ function clearResult() {
 }
 
 function setBusy(running) {
-  for (const control of [language, runtimeVersion, packages, aptPackages, exampleButton, submit]) {
+  for (const control of [language, runtimeVersion, packages, aptPackages, submit]) {
     control.disabled = running;
   }
+  customVersion.disabled = running || runtimeVersion.value !== "custom";
   submit.textContent = running ? "調査中…" : "調査する";
+}
+
+function enteredVersion() {
+  return (runtimeVersion.value === "custom" ? customVersion.value : runtimeVersion.value).trim();
+}
+
+function updateCustomVersion() {
+  const custom = runtimeVersion.value === "custom";
+  $("custom-version-field").hidden = !custom;
+  customVersion.disabled = !custom;
+  customVersion.required = custom;
+  baseHint();
 }
 
 function baseHint() {
   const node = $("base");
-  const chosen = runtimeVersion.value.trim();
+  const chosen = enteredVersion();
   if (selectedLanguage === "python") {
     const base = selectPythonBase(chosen);
     node.replaceChildren(element("code", base.image), " " + base.detail);
@@ -386,24 +399,29 @@ function baseHint() {
   node.replaceChildren(element("code", base.image ?? base.candidate), element("span", " " + base.detail));
 }
 
-function updateLanguageFields() {
+function updateLanguageFields(versionValue) {
   const mode = modes[selectedLanguage];
   const [version, first, second] = mode.example;
   $("version-label").textContent = mode.label + " のバージョン";
   $("packages-label").textContent = mode.label + " パッケージ名";
-  runtimeVersion.pattern = mode.version.source.slice(1, -1);
-  runtimeVersion.placeholder = "例  " + version;
+  customVersion.pattern = mode.version.source.slice(1, -1);
+  customVersion.placeholder = "例  " + version;
   packages.placeholder = first + "\n" + second;
   aptPackages.placeholder = mode.aptHint;
-  exampleButton.textContent = first + " + " + second + " を入力";
   $("language-nav").href = "#" + selectedLanguage + "-title";
   $("language-nav").textContent = mode.label + " の依存";
-  $("r-versions").replaceChildren(...mode.versions.map((value) => {
-    const option = element("option");
+  runtimeVersion.replaceChildren(...mode.versions.map((value) => {
+    const option = element("option", value);
     option.value = value;
     return option;
   }));
-  baseHint();
+  const other = element("option", "その他のバージョン");
+  other.value = "custom";
+  runtimeVersion.append(other);
+  runtimeVersion.value = mode.versions.includes(versionValue) ? versionValue :
+    versionValue === undefined ? version : "custom";
+  customVersion.value = runtimeVersion.value === "custom" ? versionValue : "";
+  updateCustomVersion();
 }
 
 function names(value) {
@@ -422,32 +440,23 @@ function download(filename, type, value) {
 }
 
 updateLanguageFields();
-runtimeVersion.addEventListener("input", baseHint);
+runtimeVersion.addEventListener("change", updateCustomVersion);
+customVersion.addEventListener("input", baseHint);
 language.addEventListener("change", () => {
-  drafts.set(selectedLanguage, {version: runtimeVersion.value, names: packages.value, apt: aptPackages.value});
+  drafts.set(selectedLanguage, {version: enteredVersion(), names: packages.value, apt: aptPackages.value});
   selectedLanguage = language.value;
   const draft = drafts.get(selectedLanguage);
-  runtimeVersion.value = draft?.version ?? (selectedLanguage === "python" ? "3.12" : "");
   packages.value = draft?.names ?? "";
   aptPackages.value = draft?.apt ?? "";
   clearResult();
   $("input-error").hidden = true;
-  updateLanguageFields();
+  updateLanguageFields(draft?.version);
 });
 form.addEventListener("input", () => {
   clearResult();
   $("input-error").hidden = true;
 });
 form.addEventListener("invalid", clearResult, true);
-exampleButton.addEventListener("click", () => {
-  clearResult();
-  const [version, ...example] = modes[selectedLanguage].example;
-  runtimeVersion.value = version;
-  packages.value = example.join("\n");
-  $("input-error").hidden = true;
-  baseHint();
-  packages.focus();
-});
 dockerButton.addEventListener("click", () => {
   if (latest?.dockerfile) download("Dockerfile", "application/octet-stream", latest.dockerfile);
 });
@@ -461,7 +470,7 @@ form.addEventListener("submit", async (event) => {
   clearResult();
   const id = selectedLanguage;
   const mode = modes[id];
-  const version = runtimeVersion.value.trim();
+  const version = enteredVersion();
   const entered = names(packages.value);
   const requested = id === "r" ? entered : [...new Set(entered.map(normalizePythonName))];
   const ubuntuRequested = names(aptPackages.value);
