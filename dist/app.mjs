@@ -1,9 +1,9 @@
-import catalog from "./runtime-catalog.mjs?v=dependency-evidence-1";
-import { TARGETS } from "./targets.mjs?v=dependency-evidence-1";
-import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=dependency-evidence-1";
-import { dockerfileBlockers, makeDockerfile, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=dependency-evidence-1";
+import catalog from "./runtime-catalog.mjs?v=runtime-summary-1";
+import { TARGETS } from "./targets.mjs?v=runtime-summary-1";
+import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=runtime-summary-1";
+import { dockerfileBlockers, dockerfileHashes, makeDockerfile, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=runtime-summary-1";
 import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=dependency-evidence-1";
-import { inspectPythonTarget } from "./python-investigation.mjs?v=dependency-evidence-1";
+import { inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=runtime-summary-1";
 import { PYPI } from "./python-resolver.mjs?v=dependency-evidence-1";
 import { CRAN, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR } from "./r-resolver.mjs";
 
@@ -360,6 +360,30 @@ function revisions(report) {
   return reviews;
 }
 
+function renderDockerfileHashes(hashes) {
+  const block = $("dockerfile-hashes");
+  const body = $("dockerfile-hash-list");
+  block.hidden = !hashes;
+  body.replaceChildren();
+  if (!hashes) return;
+
+  const base = element("p");
+  base.append("ベースイメージ ", element("code", hashes.baseImage.reference),
+    element("code", hashes.baseImage.digest, "docker-digest"));
+  body.append(base);
+  if (hashes.wheels.length) {
+    const entries = element("dl");
+    for (const wheel of hashes.wheels) {
+      const digest = element("dd");
+      digest.append(element("code", "sha256:" + wheel.sha256, "docker-digest"));
+      entries.append(element("dt", wheel.name + " " + wheel.version), digest);
+    }
+    const wheelHashes = details("Python wheel " + hashes.wheels.length + " 件", entries);
+    wheelHashes.open = hashes.wheels.length <= 8;
+    body.append(wheelHashes);
+  }
+}
+
 function render(report, dockerfile) {
   const {base, apt, aptError, requested, finishedAt, language, requestedVersion} = report;
   const mode = modes[language];
@@ -382,14 +406,17 @@ function render(report, dockerfile) {
     return block;
   };
   $("result-summary").replaceChildren(
-    stat(mode.label + " " + targetVersion, "調査したバージョン"),
+    stat(mode.label + " " + targetVersion, requestedVersion === targetVersion
+      ? "調査したバージョン" : "調査したバージョン（指定 " + requestedVersion + "）"),
     stat(String(result.nodes.length), "依存一覧の件数"),
     stat(apt ? String(apt.pins.length) : "—", "Ubuntu の固定件数"),
   );
 
   const versionNote = $("python-version-note");
   versionNote.textContent = report.pythonVersionNote ?? "";
+  if (report.pythonVersionSource) versionNote.append(" ", link(report.pythonVersionSource, "Python.org の公開版一覧"));
   versionNote.hidden = !report.pythonVersionNote;
+  renderDockerfileHashes(report.dockerfileHashes);
   $("docker-preview").hidden = !dockerfile;
   $("docker-preview").open = false;
   $("docker-code").textContent = dockerfile;
@@ -458,10 +485,14 @@ function baseHint() {
   const node = $("base");
   const chosen = enteredVersion();
   if (selectedLanguage === "python") {
-    if (runtimeVersion.value === "custom") {
-      node.textContent = "入力した CPython 3 の版で依存を調べます。パッチ版まで指定できます。";
+    const bundled = catalog[release].python;
+    if (chosen === TARGETS[release].python || chosen === bundled) {
+      node.textContent = "Ubuntu の APT 索引で固定できる CPython " + bundled + " を使用します。";
+    } else if (PYTHON_RUNTIME.test(chosen)) {
+      const patch = catalog.pythonSeries[chosen];
+      node.textContent = "依存調査のみ。" + (patch ? "公開版 " + patch + " で調査します。" : "");
     } else {
-      node.replaceChildren(element("code", TARGETS[release].image.split("@")[0]), " · Ubuntu 索引の CPython " + catalog[release].python);
+      node.textContent = "Python 3 の系列またはパッチ版を指定できます。";
     }
     return;
   }
@@ -476,22 +507,31 @@ function baseHint() {
 function updateLanguageFields(versionValue) {
   const mode = modes[selectedLanguage];
   const [first, second] = mode.example;
-  const versions = selectedLanguage === "r" ? rVersions(release) : [catalog[release].python];
-  const version = versions.at(-1);
+  const python = selectedLanguage === "python" ? pythonVersionChoices(release) : null;
+  const versions = python ? [python.defaultVersion, ...python.investigationOnly] : rVersions(release);
+  const version = python?.defaultVersion ?? versions.at(-1);
   $("environment-os").textContent = TARGETS[release].label;
   $("version-label").textContent = mode.label + " のバージョン";
   $("packages-label").textContent = mode.label + " パッケージ名";
   customVersion.pattern = mode.version.source.slice(1, -1);
-  customVersion.placeholder = version ? "例  " + version : "メジャー.マイナー.パッチ";
+  customVersion.placeholder = version ? "例  " + (python ? catalog[release].python : version) : "メジャー.マイナー.パッチ";
   packages.placeholder = first + "\n" + second;
   aptPackages.placeholder = mode.aptHint;
   $("language-nav").href = "#" + selectedLanguage + "-title";
   $("language-nav").textContent = mode.label + " の依存";
-  runtimeVersion.replaceChildren(...versions.map((value) => {
+  const options = versions.map((value) => {
     const option = element("option", value);
     option.value = value;
     return option;
-  }));
+  });
+  if (python) {
+    const group = element("optgroup");
+    group.label = "依存調査のみ";
+    group.append(...options.slice(1));
+    runtimeVersion.replaceChildren(options[0], group);
+  } else {
+    runtimeVersion.replaceChildren(...options);
+  }
   const other = element("option", "その他のバージョン");
   other.value = "custom";
   runtimeVersion.append(other);
@@ -602,6 +642,7 @@ form.addEventListener("submit", async (event) => {
     report.notes = revisions(report);
     report.dockerfileBlockers = dockerfileBlockers(report);
     const dockerfile = makeDockerfile(report);
+    report.dockerfileHashes = dockerfile ? dockerfileHashes(report) : null;
     render(report, dockerfile);
     latest = { report, dockerfile };
     const heading = $("result-title");

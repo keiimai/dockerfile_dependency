@@ -1,4 +1,4 @@
-import catalog from "./runtime-catalog.mjs?v=dependency-evidence-1";
+import catalog from "./runtime-catalog.mjs?v=runtime-summary-1";
 
 export const TARGETS = {
   noble: {

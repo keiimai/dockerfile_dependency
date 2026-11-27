@@ -16,6 +16,8 @@ from urllib.request import Request, urlopen
 from update_ubuntu import ROOT, packages, snapshot_sources, update, verified_index
 
 CRAN = "https://cloud.r-project.org/src/base/"
+PYTHON_DOWNLOADS = "https://www.python.org/downloads/source/"
+UBUNTU_RELEASES = ("noble", "resolute")
 ROCKER = "https://registry-1.docker.io/v2/rocker/rstudio"
 MEDIA = ", ".join((
     "application/vnd.oci.image.index.v1+json",
@@ -51,6 +53,22 @@ def read_catalog(path):
 
 def version_key(version):
     return tuple(map(int, version.split(".")))
+
+
+def python_series():
+    releases = re.findall(r'href="/downloads/release/python-(\d+)/"[^>]*>\s*Python\s+(3\.\d+\.\d+)\s+-',
+                          fetch(PYTHON_DOWNLOADS).decode())
+    series = {}
+    for slug, version in releases:
+        parts = version.split(".")
+        if slug != "".join(parts):
+            continue
+        minor = ".".join(parts[:2])
+        if minor not in series or version_key(version) > version_key(series[minor]):
+            series[minor] = version
+    if not series:
+        raise ValueError("Python.org did not list any stable CPython 3 releases")
+    return series
 
 
 def cran_versions(minimum):
@@ -114,14 +132,14 @@ def rocker_image(version, token):
 
 
 def refresh_r(catalog):
-    known = {version for target in catalog.values() for version in target["r"]}
+    known = {version for release in UBUNTU_RELEASES for version in catalog[release]["r"]}
     candidates = [version for version in cran_versions(min(map(version_key, known))) if version not in known]
     if not candidates:
         return
     token = rocker_token()
     for version in candidates:
         image = rocker_image(version, token)
-        if image and image[0] in catalog:
+        if image and image[0] in UBUNTU_RELEASES:
             release, fixed = image
             catalog[release]["r"][version] = fixed
             print(f"Verified R {version} / {release} / arm64 {fixed['arm64']}", flush=True)
@@ -181,7 +199,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", help="Official Ubuntu snapshot UTC time (YYYYMMDDTHHMMSSZ)")
     parser.add_argument("--force-index", action="store_true", help="Refresh both complete Ubuntu indexes")
-    parser.add_argument("--release", choices=("noble", "resolute"), help="Refresh only this Ubuntu release")
+    parser.add_argument("--release", choices=UBUNTU_RELEASES, help="Refresh only this Ubuntu release")
     args = parser.parse_args(argv)
     snapshot = args.snapshot or (datetime.now(timezone.utc) - timedelta(hours=12)).strftime("%Y%m%dT%H%M%SZ")
     if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", snapshot):
@@ -191,13 +209,14 @@ def main(argv=None):
     catalog = read_catalog(CATALOG)
     before = json.dumps(catalog, sort_keys=True)
     refresh_r(catalog)
+    catalog["pythonSeries"] = python_series()
     work = ROOT / "_tmp"
     work.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="runtime-catalog-", dir=work) as temp:
         staging = Path(temp)
-        staged = [candidate for release, target in catalog.items()
+        staged = [candidate for release in UBUNTU_RELEASES
                   if args.release in (None, release)
-                  if (candidate := refresh_ubuntu(release, target, snapshot, staging, args.force_index))]
+                  if (candidate := refresh_ubuntu(release, catalog[release], snapshot, staging, args.force_index))]
         if json.dumps(catalog, sort_keys=True) == before and not staged:
             print("No verified runtime or index update")
             return

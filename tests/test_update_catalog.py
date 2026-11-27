@@ -16,6 +16,16 @@ def payload(value):
 
 
 class CatalogTests(unittest.TestCase):
+    def test_selects_latest_published_python_patches_without_prereleases(self):
+        page = b'''<a href="/downloads/release/python-3139/">Python 3.13.9 - May 1</a>
+                   <a href="/downloads/release/python-31310/">Python 3.13.10 - June 1</a>
+                   <a href="/downloads/release/python-3140/">Python 3.14.0 - Oct. 7</a>
+                   <a href="/downloads/release/python-3150rc1/">Python 3.15.0rc1 - Aug. 1</a>
+                   <a href="/downloads/release/python-3200/">Python 3.99.0 - Invalid slug</a>'''
+        with patch.object(updater, "fetch", return_value=page) as fetch:
+            self.assertEqual(updater.python_series(), {"3.13": "3.13.10", "3.14": "3.14.0"})
+            fetch.assert_called_once_with(updater.PYTHON_DOWNLOADS)
+
     def test_finds_stable_releases_across_r_major_versions(self):
         with patch.object(updater, "fetch", side_effect=[
             b'<a href="R-4/">R-4</a><a href="R-5/">R-5</a>',

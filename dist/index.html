@@ -6,8 +6,8 @@
   <meta name="description" content="CRAN と PyPI の公開メタデータから R または Python と Ubuntu の依存を調べ、Dockerfile の参考例を生成します。">
   <meta name="color-scheme" content="light dark">
   <title>パッケージの依存調査</title>
-  <link rel="stylesheet" href="./style.css?v=dependency-evidence-1">
-  <script type="module" src="./app.mjs?v=dependency-evidence-1"></script>
+  <link rel="stylesheet" href="./style.css?v=runtime-summary-1">
+  <script type="module" src="./app.mjs?v=runtime-summary-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -90,6 +90,10 @@
         <div id="active" hidden>
           <div id="result-summary" class="result-summary"></div>
           <p id="python-version-note" class="hint" hidden></p>
+          <section id="dockerfile-hashes" aria-labelledby="dockerfile-hash-title" hidden>
+            <h3 id="dockerfile-hash-title">Dockerfile に記載した SHA-256</h3>
+            <div id="dockerfile-hash-list"></div>
+          </section>
           <section class="exports" aria-labelledby="export-title">
             <h3 id="export-title">ダウンロード</h3>
             <div class="actions">

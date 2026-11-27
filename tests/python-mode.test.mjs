@@ -6,9 +6,9 @@ import test from "node:test";
 
 import catalog from "../dist/runtime-catalog.mjs";
 import { loadAptIndex } from "../dist/apt-resolver.mjs";
-import { dockerfileBlockers, makeDockerfile, selectPythonBase, PYTHON_APT } from "../dist/dockerfile.mjs";
+import { dockerfileBlockers, dockerfileHashes, makeDockerfile, selectPythonBase, PYTHON_APT } from "../dist/dockerfile.mjs";
 import { normalizePythonName, pythonEnvironment, readRequirement, wheelCandidate } from "../dist/python-packaging.mjs";
-import { inspectPythonTarget } from "../dist/python-investigation.mjs";
+import { inspectPythonTarget, pythonVersionChoices } from "../dist/python-investigation.mjs";
 import { inspectPython, PYPI } from "../dist/python-resolver.mjs";
 
 const target = "3.12.3";
@@ -67,7 +67,11 @@ test("investigates Python outside the Ubuntu runtime even when no Dockerfile can
     "old-patch": [release("old-patch", "1.0")],
     "new-patch": [release("new-patch", "1.0")],
   };
-  for (const [version, effective, dependency] of [["3.13", "3.13.0", "old-patch"], ["3.13.1", "3.13.1", "new-patch"]]) {
+  const recent = catalog.pythonSeries["3.13"];
+  const choices = pythonVersionChoices("noble");
+  assert(choices.investigationOnly.length > 0);
+  assert(choices.investigationOnly.every((version) => catalog.pythonSeries[version]));
+  for (const [version, effective, dependency] of [["3.13", recent, "new-patch"], ["3.13.0", "3.13.0", "old-patch"]]) {
     const result = await withPyPiFixture(distributions, () => inspectPythonTarget(pythonTarget(version, index)));
     const report = {...result, language: "python", requested: ["sample"]};
     assert.equal(result.pythonVersion, effective);
@@ -75,6 +79,7 @@ test("investigates Python outside the Ubuntu runtime even when no Dockerfile can
     assert.equal(result.python.ready, true);
     assert.deepEqual(result.python.nodes.map(({name}) => name), ["sample", dependency]);
     assert.equal(Boolean(result.pythonVersionNote), version === "3.13");
+    assert.equal(result.pythonVersionSource, version === "3.13" ? "https://www.python.org/downloads/source/" : null);
     assert(!result.apt.evidence.some(({kind}) => kind === "実行環境"));
     assert.match(dockerfileBlockers(report)[0], /Ubuntu 24\.04 の既定.*実行環境をこのサイトでは固定できません/);
     assert.equal(makeDockerfile(report), "");
@@ -212,6 +217,9 @@ test("pins the real Ubuntu Python runtime and emits a standalone wheel-only Dock
   const index = await loadBundledIndex();
   const patch = catalog.noble.python;
   const minor = patch.split(".").slice(0, 2).join(".");
+  const choices = pythonVersionChoices("noble");
+  assert.equal(choices.defaultVersion, minor);
+  assert(!choices.investigationOnly.includes(minor));
   const base = selectPythonBase(minor, index);
   assert.equal(base.pythonVersion, patch);
   assert.equal(selectPythonBase(minor + ".999999", index).status, "conflict");
@@ -227,6 +235,10 @@ test("pins the real Ubuntu Python runtime and emits a standalone wheel-only Dock
   const request = {language: "python", base, apt, python, requested: ["demo"], startedAt: "2026-11-27T00:00:00Z"};
   const text = makeDockerfile(request);
   assert(text.includes("python" + minor + "="));
+  const hashes = dockerfileHashes(request);
+  assert(text.includes("FROM " + hashes.baseImage.reference + "@" + hashes.baseImage.digest));
+  assert.deepEqual(hashes.wheels.map(({name}) => name), ["demo"]);
+  assert(text.includes(hashes.wheels[0].url + " --hash=sha256:" + hashes.wheels[0].sha256));
   assert.equal(makeDockerfile({...request, base: {...base, pythonVersion: minor + ".999999"}}), "");
   assert.match(text, /demo @ https:\/\/files\.pythonhosted\.org\/.* --hash=sha256:[0-9a-f]{64}/);
   assert.match(text, /--no-index --require-hashes --only-binary=:all:/);

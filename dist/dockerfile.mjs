@@ -1,6 +1,6 @@
-import { TARGETS } from "./targets.mjs?v=dependency-evidence-1";
+import { TARGETS } from "./targets.mjs?v=runtime-summary-1";
 
-import catalog from "./runtime-catalog.mjs?v=dependency-evidence-1";
+import catalog from "./runtime-catalog.mjs?v=runtime-summary-1";
 
 export const VERSIONS = rVersions("noble");
 
@@ -21,7 +21,7 @@ export function selectBase(rVersion, release = "noble") {
       detail: "Rocker の arm64 構成メタデータで確認。",
     };
   }
-  const other = Object.keys(catalog).find((candidate) => catalog[candidate].r[rVersion]);
+  const other = Object.keys(TARGETS).find((candidate) => catalog[candidate].r[rVersion]);
   if (other) {
     return {...base, image: null, candidate: tag, status: "conflict",
       detail: "指定した R の固定イメージは " + TARGETS[other].label + " 向けです。"};
@@ -219,9 +219,23 @@ export function pythonRuntimeFromApt(release, index, apt) {
   return upstreamPythonVersion(pin);
 }
 
+function pythonWheelArtifacts(python) {
+  return python.nodes.map(({name, version, distribution}) => ({
+    name, version, url: distribution.url, sha256: distribution.sha256,
+  }));
+}
+
+export function dockerfileHashes({base, language, python}) {
+  const [reference, digest] = base.image.split("@");
+  return {
+    baseImage: {reference, digest},
+    wheels: language === "python" ? pythonWheelArtifacts(python) : [],
+  };
+}
+
 function makePythonDockerfile({base, python, apt, requested, startedAt}) {
-  const wheels = python.nodes.map(({name, distribution}) =>
-    name + " @ " + distribution.url + " --hash=sha256:" + distribution.sha256);
+  const wheels = pythonWheelArtifacts(python).map(({name, url, sha256}) =>
+    name + " @ " + url + " --hash=sha256:" + sha256);
   return [
     "# syntax=docker/dockerfile:1",
     "# 依存メタデータによる調査結果から生成した参考例",
