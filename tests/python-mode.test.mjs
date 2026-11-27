@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+import catalog from "../dist/runtime-catalog.mjs";
 import { loadAptIndex, inspectApt } from "../dist/apt-resolver.mjs";
 import { makeDockerfile, selectPythonBase, PYTHON_APT } from "../dist/dockerfile.mjs";
 import { normalizePythonName, pythonEnvironment, readRequirement, wheelCandidate } from "../dist/python-packaging.mjs";
@@ -25,7 +26,7 @@ function release(name, version, {tags = "py3-none-any", deps = [], requires = ">
     "requires-python": requires, yanked}, metadata};
 }
 
-async function fixture(catalog, names) {
+async function fixture(catalog, names, pythonVersion = target) {
   const previous = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (url.startsWith(PYPI)) {
@@ -41,7 +42,7 @@ async function fixture(catalog, names) {
     throw new Error("Unexpected fetch " + url);
   };
   try {
-    return await inspectPython(names, target, () => {});
+    return await inspectPython(names, pythonVersion, () => {});
   } finally {
     globalThis.fetch = previous;
   }
@@ -121,18 +122,21 @@ test("pins the real Ubuntu Python runtime and emits a standalone wheel-only Dock
   } finally {
     globalThis.fetch = originalFetch;
   }
-  const base = selectPythonBase("3.12", index);
-  assert.equal(base.pythonVersion, target);
-  assert.equal(selectPythonBase("3.12.9", index).status, "conflict");
-  assert.equal(selectPythonBase("3.13", index).status, "pending");
-  const python = await fixture({demo: [release("demo", "1.0", {external:["libxml2"]})]}, ["demo"]);
+  const patch = catalog.noble.python;
+  const minor = patch.split(".").slice(0, 2).join(".");
+  const base = selectPythonBase(minor, index);
+  assert.equal(base.pythonVersion, patch);
+  assert.equal(selectPythonBase(minor + ".999999", index).status, "conflict");
+  assert.equal(selectPythonBase("3.999999", index).status, "pending");
+  const python = await fixture({demo: [release("demo", "1.0", {external:["libxml2"]})]}, ["demo"], patch);
   const apt = inspectApt(python.nodes, [], index, PYTHON_APT);
   assert.equal(apt.plan.status, "ok");
   assert.deepEqual(apt.pins.map(({name}) => name), PYTHON_APT);
   assert(apt.evidence.some(({kind, included}) => kind === "Requires-External" && !included));
   const request = {language: "python", base, apt, python, requested: ["demo"], startedAt: "2026-11-27T00:00:00Z"};
   const text = makeDockerfile(request);
-  assert.match(text, /python3\.12=.*ubuntu/);
+  assert(text.includes("python" + minor + "="));
+  assert.equal(makeDockerfile({...request, base: {...base, pythonVersion: minor + ".999999"}}), "");
   assert.match(text, /demo @ https:\/\/files\.pythonhosted\.org\/.* --hash=sha256:[0-9a-f]{64}/);
   assert.match(text, /--no-index --require-hashes --only-binary=:all:/);
   assert.match(text, /python -m pip check/);

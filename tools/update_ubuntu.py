@@ -11,7 +11,6 @@ import json
 import lzma
 from pathlib import Path
 import re
-import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,11 +89,17 @@ def contents(path):
                     name.decode("ascii") for name in names if PACKAGE.fullmatch(name)]
 
 
-def load(source, scratch):
+def verified_index(source, scratch):
     target = scratch / (source["suite"] + "-" + source["path"].replace("/", "-"))
-    if download(source["url"], target) != source["sha256"]:
-        raise ValueError(f"SHA-256 mismatch: {source['url']}")
-    print(f"Verified {source['url']}", flush=True)
+    if not target.exists():
+        if download(source["url"], target) != source["sha256"]:
+            raise ValueError(f"SHA-256 mismatch: {source['url']}")
+        print(f"Verified {source['url']}", flush=True)
+    return target
+
+
+def load(source, scratch):
+    target = verified_index(source, scratch)
     if source["kind"] == "Packages":
         return list(packages(target, source)), {}
     libraries = defaultdict(set)
@@ -103,12 +108,20 @@ def load(source, scratch):
     return [], libraries
 
 
-def update(snapshot, scratch, release="noble"):
+def snapshot_sources(snapshot, scratch, release):
+    base = f"https://snapshot.ubuntu.com/ubuntu/{snapshot}"
+    suites = (release, f"{release}-updates", f"{release}-security")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        return [source for group in pool.map(lambda suite: release_indexes(base, suite, scratch), suites)
+                for source in group]
+
+
+def update(snapshot, scratch, release="noble", *, sources=None, destination=None):
     suites = (release, f"{release}-updates", f"{release}-security")
     base = f"https://snapshot.ubuntu.com/ubuntu/{snapshot}"
+    if sources is None:
+        sources = snapshot_sources(snapshot, scratch, release)
     with ThreadPoolExecutor(max_workers=6) as pool:
-        releases = list(pool.map(lambda suite: release_indexes(base, suite, scratch), suites))
-        sources = [source for release in releases for source in release]
         tasks = [source for source in sources if source["kind"] != "Release"]
         rows = []
         libraries = defaultdict(set)
@@ -133,7 +146,7 @@ def update(snapshot, scratch, release="noble"):
     staging = scratch / f"ubuntu-{release}-arm64.json.gz"
     with gzip.open(staging, "wt", encoding="utf-8", compresslevel=8) as out:
         json.dump(data, out, ensure_ascii=False, separators=(",", ":"))
-    destination = ROOT / f"dist/data/ubuntu-{release}-arm64.json.gz"
+    destination = destination or ROOT / f"dist/data/ubuntu-{release}-arm64.json.gz"
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging.replace(destination)
     print(f"{destination}: {len(rows):,} package records, {len(libraries):,} library names")
@@ -147,10 +160,9 @@ def main():
     if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", args.snapshot):
         parser.error("use YYYYMMDDTHHMMSSZ")
     datetime.strptime(args.snapshot, "%Y%m%dT%H%M%SZ")
-    work_dir = ROOT / "_tmp"
-    work_dir.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="ubuntu-index-", dir=work_dir) as scratch:
-        update(args.snapshot, Path(scratch), args.release)
+    from update_catalog import main as refresh_catalog
+
+    refresh_catalog(["--snapshot", args.snapshot, "--force-index", "--release", args.release])
 
 
 if __name__ == "__main__":

@@ -1,40 +1,30 @@
 import { TARGETS } from "./targets.mjs";
 
-const reference = "ca42f2e50641dffb9b837ed25c87e7a187cb153348fba8596acfafa0f83765a5";
-const arm64Digests = new Map([
-  ["4.5.2", "3d2018093b4a0ff2acd65273082aec00a9d1b2606f0ac73b1beaa25ef37f7157"],
-  ["4.5.3", "eb513f694abfd0b4bfe89abafb49c4103a3a8a68216a5b8a607381c197e2a81d"],
-  ["4.6.0", "639365d1eb6a68c80c3066c294237890fd7661dc1fd011e399ecba4f9df15c12"],
-  ["4.6.1", "1ad536779cc2354f075fd28e9a67dea895b4605def6299a3a81d555a2e4ca925"],
-]);
+import catalog from "./runtime-catalog.mjs";
 
-export const VERSIONS = [...arm64Digests.keys()];
-
-const resoluteR = new Map([
-  ["4.6.2", "563df7ef8fab73beb884ee5ddcd99c56bf3309d9aa869b2468c7fb5dcf2ef9e9"],
-]);
+export const VERSIONS = rVersions("noble");
 
 export function rVersions(release) {
-  return release === "resolute" ? [...resoluteR.keys()] : VERSIONS;
+  return Object.keys(catalog[release].r).sort((left, right) => left.localeCompare(right, "en", {numeric: true}));
 }
 
 export function selectBase(rVersion, release = "noble") {
   const target = TARGETS[release];
   const tag = "rocker/rstudio:" + rVersion;
   const evidence = "https://hub.docker.com/r/rocker/rstudio/tags?name=" + encodeURIComponent(rVersion);
-  const digest = (release === "resolute" ? resoluteR : arm64Digests).get(rVersion);
+  const verified = catalog[release].r[rVersion];
   const base = {os: target.label, osVersion: target.version, release, platform: "linux/arm64", rVersion, evidence};
-  if (digest) {
+  if (verified) {
     return {
-      ...base, image: tag + "@sha256:" + (rVersion === "4.5.3" ? reference : digest),
-      arm64Manifest: "sha256:" + digest, status: "ok",
-      detail: rVersion === "4.5.3" ? "参照プロジェクトと同じ固定イメージ。" : "Rocker の arm64 構成メタデータで確認。",
+      ...base, image: tag + "@" + (verified.digest ?? verified.arm64),
+      arm64Manifest: verified.arm64, status: "ok",
+      detail: "Rocker の arm64 構成メタデータで確認。",
     };
   }
-  const other = release === "noble" ? resoluteR : arm64Digests;
-  if (other.has(rVersion)) {
+  const other = Object.keys(catalog).find((candidate) => catalog[candidate].r[rVersion]);
+  if (other) {
     return {...base, image: null, candidate: tag, status: "conflict",
-      detail: "指定した R の固定イメージは " + (release === "noble" ? "Ubuntu 26.04" : "Ubuntu 24.04") + " 向けです。"};
+      detail: "指定した R の固定イメージは " + TARGETS[other].label + " 向けです。"};
   }
   return {...base, image: null, candidate: tag, status: "pending",
     detail: "この R 版の " + target.label + " / arm64 イメージを確認できません。R の依存調査は続行します。"};
@@ -154,8 +144,12 @@ export function makeDockerfile(report) {
 export const PYTHON_RUNTIME = /^\d+\.\d+(?:\.\d+)?$/;
 export const PYTHON_APT = pythonAptPackages("noble");
 
-export function pythonAptPackages(release) {
-  return ["ca-certificates", "python3", "python" + TARGETS[release].python, "python3-venv"];
+export function pythonAptPackages(release, minor = TARGETS[release].python) {
+  return ["ca-certificates", "python3", "python" + minor, "python3-venv"];
+}
+
+export function upstreamPythonVersion(pin) {
+  return pin?.version.match(/^(?:\d+:)?(3\.\d+\.\d+)(?:[+~-]|$)/)?.[1];
 }
 
 function wrongAptRelease(base, apt) {
@@ -168,12 +162,10 @@ export function selectPythonBase(requestedVersion, index, release = "noble", apt
     image: target.image, os: target.label, osVersion: target.version, release, platform: "linux/arm64",
     evidence: "https://hub.docker.com/_/ubuntu", requestedVersion,
   };
-  const packageName = "python" + target.python;
   if (requestedVersion.split(".").slice(0, 2).join(".") !== target.python) {
     return {...base, status: "pending", detail: "この OS の調査対象は CPython " + target.python + " です。"};
   }
-  const pin = apt === undefined ? index?.real.get(packageName)?.[0] : apt?.pins.find(({name}) => name === packageName);
-  const version = pin?.version.match(/^(?:\d+:)?(3\.\d+\.\d+)(?:[+~-]|$)/)?.[1];
+  const version = pythonRuntimeFromApt(release, index, apt);
   if (!version) {
     return {...base, status: "pending", detail: "Ubuntu 索引で採用する Python のパッチ版を確認できません。"};
   }
@@ -185,9 +177,16 @@ export function selectPythonBase(requestedVersion, index, release = "noble", apt
     detail: "固定 Ubuntu イメージ。CPython " + version + " を Ubuntu 索引で確認。"};
 }
 
+export function pythonRuntimeFromApt(release, index, apt) {
+  const packageName = "python" + TARGETS[release].python;
+  const pin = apt === undefined ? index?.real.get(packageName)?.[0] : apt?.pins.find(({name}) => name === packageName);
+  return upstreamPythonVersion(pin);
+}
+
 function makePythonDockerfile({base, python, apt, requested, startedAt}) {
   if (base.status !== "ok" || !python.ready || apt?.plan?.status !== "ok" ||
-      wrongAptRelease(base, apt) || !pythonAptPackages(base.release).every((name) => apt.pins.some((pin) => pin.name === name))) return "";
+      wrongAptRelease(base, apt) || pythonRuntimeFromApt(base.release, undefined, apt) !== base.pythonVersion ||
+      !pythonAptPackages(base.release).every((name) => apt.pins.some((pin) => pin.name === name))) return "";
   const wheels = python.nodes.map(({name, distribution}) =>
     name + " @ " + distribution.url + " --hash=sha256:" + distribution.sha256);
   return [

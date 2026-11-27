@@ -60,7 +60,7 @@ function add(map, key, value) {
   map.get(key).push(value);
 }
 
-function parseIndex(payload) {
+export function parseAptIndex(payload) {
   if (payload.schema !== 1 || payload.architecture !== "arm64" ||
       !/^\d{8}T\d{6}Z$/.test(payload.snapshot) ||
       payload.base !== "https://snapshot.ubuntu.com/ubuntu/" + payload.snapshot) {
@@ -98,24 +98,27 @@ function parseIndex(payload) {
 }
 
 const indexPromises = new Map();
-export function loadAptIndex(release = "noble") {
+export function loadAptIndex(release = "noble", snapshot) {
   if (!Object.hasOwn(TARGETS, release)) return Promise.reject(new Error("未対応の Ubuntu リリースです"));
-  if (!indexPromises.has(release)) {
+  const key = release + "/" + (snapshot ?? "");
+  if (!indexPromises.has(key)) {
     const pending = (async () => {
       const url = new URL("./data/ubuntu-" + release + "-arm64.json.gz", import.meta.url);
+      if (snapshot) url.searchParams.set("snapshot", snapshot);
       const res = await fetch(url);
       if (!res.ok || !res.body) throw new Error("Ubuntu 索引 HTTP " + res.status);
       const json = res.body.pipeThrough(new DecompressionStream("gzip"));
       const payload = await new Response(json).json();
       if (payload.suites?.[0] !== release) throw new Error("Ubuntu 索引のリリースが一致しません");
-      return parseIndex(payload);
+      if (snapshot && payload.snapshot !== snapshot) throw new Error("バージョン一覧と Ubuntu 索引の日時が一致しません。ページを再読み込みして再調査してください。");
+      return parseAptIndex(payload);
     })().catch((error) => {
-      indexPromises.delete(release);
+      indexPromises.delete(key);
       throw error;
     });
-    indexPromises.set(release, pending);
+    indexPromises.set(key, pending);
   }
-  return indexPromises.get(release);
+  return indexPromises.get(key);
 }
 
 function targetArchitecture(arch) {

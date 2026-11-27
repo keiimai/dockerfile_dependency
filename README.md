@@ -15,10 +15,12 @@ R または Python のパッケージが必要とする依存関係を調べ、U
 
 画面の配色は端末やブラウザのライト／ダーク設定に自動で合わせます。
 
-| OS | Dockerfile 生成に対応する R | Python（同梱索引の実行版） |
-| --- | --- | --- |
-| Ubuntu 24.04 LTS | 4.5.2、4.5.3、4.6.0、4.6.1 | 3.12（3.12.3） |
-| Ubuntu 26.04 LTS | 4.6.2 | 3.14（3.14.4） |
+### 選べるバージョン
+
+対応版は画面のプルダウンに表示されます。公開サイトは公式配布元を毎日確認し、対象OSの `linux/arm64` で利用できることを確認した版を反映します。
+
+- **R** はCRANで公開された安定版のうち、対応するUbuntuのRockerイメージを確認できた版を追加します。CRAN公開からイメージ配布まで時間差があります。以前の対応版も引き続き選べます。
+- **Python** は選択したUbuntuが公式APTで配布する既定のCPythonを表示します。python.orgでの公開とUbuntuの配布開始は別のため、表示される版はOSによって異なります。
 
 ## 結果を見る
 
@@ -28,15 +30,16 @@ R または Python のパッケージが必要とする依存関係を調べ、U
 
 ### 対象と制約
 
-- **R** は R-universe が提供する CRAN の公開版から依存を調べます。公開情報の反映には時間差があり、旧版の探索や Bioconductor は調査範囲外です。Dockerfile に使える R の版は上の表を参照してください。
+- **R** は R-universe が提供する CRAN の公開版から依存を調べます。公開情報の反映には時間差があり、旧版の探索や Bioconductor は調査範囲外です。Dockerfile に使える版は調査条件のプルダウンに表示されます。
 - **Python** は PyPI の公開メタデータを使い、対象環境に合う非撤回の安定版 wheel を調べます。必要に応じて旧版も探索します。ソースからのビルドは対象外です。生成した Dockerfile では wheel の取得 URL と SHA-256 を指定します。
 - **Ubuntu** は静的な公式スナップショット索引で候補と依存条件を確認します。ベース環境にパッケージが導入済みか、共有ライブラリが実際に動作するかは、調査結果だけでは確定できません。
 - Dockerfile は参考例です。このページの調査範囲は公開メタデータで、実際の Docker ビルドやパッケージの読み込みは含みません。
 
 ## 開発・保守
 
-公開サイトは本リポジトリの `main` ブランチから GitHub Pages で配信しています。利用者は冒頭のリンクを開くだけです。
+公開デモは `main` ブランチの静的ファイルをGitHub Pagesで配信しています。定期ワークフローは毎日 03:37 UTC（12:37 JST）に公式配布元を確認します。Pythonの実行環境に関係するUbuntuパッケージが変わったときと、索引が28日以上経過したときに、APT索引全体を取り直します。索引とバージョン一覧は検証に通った組み合わせを公開します。取得や検証に失敗した場合は直前の公開版が使えます。
 
-- ローカルで画面を確認する場合は、リポジトリのルートで `python3 -m http.server 8765 --bind 127.0.0.1 --directory dist` を実行し、[http://127.0.0.1:8765/](http://127.0.0.1:8765/) を開きます。
-- 回帰テストは `node --test tests/*.test.mjs` で実行します。
-- Ubuntu 索引は `python3 tools/update_ubuntu.py --release noble 20261127T070249Z` または `python3 tools/update_ubuntu.py --release resolute 20261127T130306Z` で生成します。新しい索引を生成する場合は、時刻を UTC の `YYYYMMDDTHHMMSSZ` 形式で指定します。出力は `dist/data/` の OS 別ファイルです。取得先とスナップショット日時は調査記録に含まれます。 [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
+- ローカルで画面を確認するには、リポジトリのルートで `python3 -m http.server 8765 --bind 127.0.0.1 --directory dist` を実行し、[http://127.0.0.1:8765/](http://127.0.0.1:8765/) を開きます。
+- ローカルの更新は `python3 -B tools/update_catalog.py` で実行できます。PythonとNode.jsが必要です。日時を指定して両OSの索引を再生成する例は `python3 -B tools/update_catalog.py --force-index --snapshot 20261127T183000Z` です。取得元とスナップショット日時は調査記録に含まれます。 [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
+- 回帰テストは `node --test tests/*.test.mjs` と `python3 -B -m unittest discover -s tests -p 'test_*.py'` で実行します。
+- 更新・公開の実行結果はActionsタブに記録されます。GitHubは活動のない公開リポジトリの定期実行を60日で停止する場合があります。その場合は管理者が該当ワークフローを再有効化できます。 [GitHubの定期実行の仕様](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)

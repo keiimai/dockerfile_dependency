@@ -1,6 +1,7 @@
+import catalog from "./runtime-catalog.mjs";
 import { TARGETS } from "./targets.mjs";
-import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=os-1";
-import { makeDockerfile, selectBase, selectPythonBase, rVersions, pythonAptPackages, PYTHON_RUNTIME } from "./dockerfile.mjs?v=os-1";
+import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=catalog-1";
+import { makeDockerfile, selectBase, selectPythonBase, rVersions, pythonAptPackages, pythonRuntimeFromApt, PYTHON_RUNTIME } from "./dockerfile.mjs?v=catalog-1";
 import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=os-1";
 import { PYPI, inspectPython } from "./python-resolver.mjs?v=os-1";
 import { CRAN, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR } from "./r-resolver.mjs";
@@ -24,9 +25,9 @@ const labels = {
 const scope = "公開メタデータの調査。Docker ビルド、パッケージの読み込み、共有ライブラリの動作確認は範囲外。";
 const modes = {
   r: {label: "R", name: PACKAGE_NAME, version: R_VERSION,
-    example: ["4.5.3", "ggplot2", "sf"], aptHint: "libgdal-dev, libudunits2-dev"},
+    example: ["ggplot2", "sf"], aptHint: "libgdal-dev, libudunits2-dev"},
   python: {label: "Python", name: PYTHON_NAME, version: PYTHON_RUNTIME,
-    example: ["3.12", "requests", "numpy"], aptHint: "例  libpq-dev, libxml2-dev"},
+    example: ["requests", "numpy"], aptHint: "例  libpq-dev, libxml2-dev"},
 };
 const drafts = new Map();
 const versionDrafts = new Map();
@@ -403,7 +404,7 @@ function baseHint() {
   const chosen = enteredVersion();
   if (selectedLanguage === "python") {
     const base = selectPythonBase(chosen, undefined, release);
-    node.replaceChildren(element("code", base.image.split("@")[0]));
+    node.replaceChildren(element("code", base.image.split("@")[0]), " · Ubuntu 索引の CPython " + catalog[release].python);
     return;
   }
   if (!R_VERSION.test(chosen)) {
@@ -416,14 +417,14 @@ function baseHint() {
 
 function updateLanguageFields(versionValue) {
   const mode = modes[selectedLanguage];
-  const [fallback, first, second] = mode.example;
-  const versions = selectedLanguage === "r" ? rVersions(release) : [TARGETS[release].python];
-  const version = versions.includes(fallback) ? fallback : versions[0];
+  const [first, second] = mode.example;
+  const versions = selectedLanguage === "r" ? rVersions(release) : [catalog[release].python];
+  const version = versions.at(-1);
   $("environment-os").textContent = TARGETS[release].label;
   $("version-label").textContent = mode.label + " のバージョン";
   $("packages-label").textContent = mode.label + " パッケージ名";
   customVersion.pattern = mode.version.source.slice(1, -1);
-  customVersion.placeholder = "例  " + version;
+  customVersion.placeholder = version ? "例  " + version : "メジャー.マイナー.パッチ";
   packages.placeholder = first + "\n" + second;
   aptPackages.placeholder = mode.aptHint;
   $("language-nav").href = "#" + selectedLanguage + "-title";
@@ -437,8 +438,8 @@ function updateLanguageFields(versionValue) {
   other.value = "custom";
   runtimeVersion.append(other);
   runtimeVersion.value = versions.includes(versionValue) ? versionValue :
-    versionValue === undefined ? version : "custom";
-  customVersion.value = runtimeVersion.value === "custom" ? versionValue : "";
+    versionValue === undefined && version ? version : "custom";
+  customVersion.value = runtimeVersion.value === "custom" ? (versionValue ?? "") : "";
   updateCustomVersion();
 }
 
@@ -505,7 +506,7 @@ form.addEventListener("submit", async (event) => {
   const inputError = $("input-error");
   inputError.hidden = true;
   if (!mode.version.test(version) || !requested.length || invalidNames.length || invalidApt.length) {
-    inputError.textContent = !mode.version.test(version) ? mode.label + " の版を " + runtimeVersion.options[0].value + " のように入力してください。" :
+    inputError.textContent = !mode.version.test(version) ? mode.label + " のバージョンを指定してください（" + customVersion.placeholder + "）。" :
       !requested.length ? mode.label + " パッケージ名を 1 件以上入力してください。" :
         invalidNames.length ? mode.label + " パッケージ名の形式を確認してください — " + invalidNames.join("、") :
           "Ubuntu パッケージ名の形式を確認してください — " + invalidApt.join("、");
@@ -517,11 +518,12 @@ form.addEventListener("submit", async (event) => {
   try {
     const startedAt = new Date().toISOString();
     const target = TARGETS[release];
-    const aptPromise = loadAptIndex(release).then((index) => ({index}), (error) => ({error: error.message}));
+    const aptPromise = loadAptIndex(release, catalog[release].snapshot).then((index) => ({index}), (error) => ({error: error.message}));
     const progress = (done, total) => setStatus("neutral", mode.label + " メタデータ " + done + " / " + total);
     const report = {
       schema: 1, title: "依存メタデータによる調査結果", scope, startedAt, language: id, requestedVersion: version,
       os: target.label, osRelease: release, platform: "linux/arm64", requested, ubuntuRequested,
+      catalogSnapshot: catalog[release].snapshot,
     };
     if (id === "r") {
       report.base = selectBase(version, release);
@@ -548,8 +550,9 @@ form.addEventListener("submit", async (event) => {
         ? inspectApt(report.python.nodes, ubuntuRequested, index, bootstrap) : apt;
       report.aptError = error ?? null;
       if (report.base.status === "ok" && report.apt?.plan?.status === "ok" &&
-          !bootstrap.every((name) => report.apt.pins.some((pin) => pin.name === name))) {
-        report.base = {...report.base, status: "pending", detail: "Python の実行に必要な Ubuntu パッケージをすべて固定できません。"};
+          (!bootstrap.every((name) => report.apt.pins.some((pin) => pin.name === name)) ||
+           pythonRuntimeFromApt(release, index, report.apt) !== report.pythonVersion)) {
+        report.base = {...report.base, status: "pending", detail: "調査に使用した Python 版と実行に必要な Ubuntu パッケージを同時に固定できません。"};
       }
       report.sources = {pythonIndex: PYPI, wheelMetadata: "PyPI Core Metadata"};
     }
