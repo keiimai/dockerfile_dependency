@@ -1,6 +1,6 @@
 # R・Python パッケージの依存調査
 
-**[公開デモをブラウザで開く](https://keiimai.github.io/dockerfile_dependency/)**
+**[依存調査をブラウザで開く](https://keiimai.github.io/dockerfile_dependency/)**
 
 GitHub アカウントや GitHub Pages の設定は不要です。調査はブラウザで行うため、R、Python、Docker のインストールも不要です。
 
@@ -37,7 +37,7 @@ R または Python のパッケージが必要とする依存関係を調べ、U
 
 ## 開発・保守
 
-公開デモは `main` ブランチの静的ファイルをGitHub Pagesで配信しています。定期ワークフローは2026年11月30日を起点に、隔週月曜の12:37 JST（03:37 UTC）に公式配布元を確認します。対象週以外は外部データの取得やデプロイを省略します。Pythonの実行環境に関係するUbuntuパッケージが変わったときと、索引が28日以上経過したときに、APT索引全体を取り直します。索引とバージョン一覧は検証に通った組み合わせを公開します。取得や検証に失敗した場合は直前の公開版が使えます。
+公開サイトは `main` ブランチの静的ファイルをGitHub Pagesで配信しています。定期ワークフローは2026年11月30日を起点に、隔週月曜の12:37 JST（03:37 UTC）に公式配布元を確認します。対象週以外は外部データの取得やデプロイを省略します。Pythonの実行環境に関係するUbuntuパッケージが変わったときと、索引が28日以上経過したときに、APT索引全体を取り直します。索引とバージョン一覧は検証に通った組み合わせを公開します。取得や検証に失敗した場合は直前の公開版が使えます。
 
 - ローカルで画面を確認するには、リポジトリのルートで `python3 -m http.server 8765 --bind 127.0.0.1 --directory dist` を実行し、[http://127.0.0.1:8765/](http://127.0.0.1:8765/) を開きます。
 - ローカルの更新は `python3 -B tools/update_catalog.py` で実行できます。PythonとNode.jsが必要です。日時を指定して両OSの索引を再生成する例は `python3 -B tools/update_catalog.py --force-index --snapshot 20261127T183000Z` です。取得元とスナップショット日時は調査記録に含まれます。 [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
