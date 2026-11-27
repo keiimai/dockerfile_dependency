@@ -1,9 +1,10 @@
 import catalog from "./runtime-catalog.mjs";
 import { TARGETS } from "./targets.mjs";
 import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=catalog-1";
-import { makeDockerfile, selectBase, selectPythonBase, rVersions, pythonAptPackages, pythonRuntimeFromApt, PYTHON_RUNTIME } from "./dockerfile.mjs?v=catalog-1";
+import { dockerfileBlockers, makeDockerfile, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=python-custom-1";
 import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=os-1";
-import { PYPI, inspectPython } from "./python-resolver.mjs?v=os-1";
+import { inspectPythonTarget } from "./python-investigation.mjs?v=python-custom-1";
+import { PYPI } from "./python-resolver.mjs?v=os-1";
 import { CRAN, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR } from "./r-resolver.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -283,27 +284,22 @@ function aptSection(apt, error) {
 }
 
 function revisions(report) {
-  const { base, apt, aptError, language } = report;
-  const mode = modes[language];
+  const { apt, aptError, language } = report;
   const reviews = language === "r" ? [
     "R は CRAN 公開版 API の取得時点の候補を対象とします。旧版の組み合わせは調査対象外です。",
     "R の同梱標準パッケージは R 本体と同じ版として扱います。推奨パッケージは公開版を調査します。",
     "ソース URL を版で固定し、生成した Dockerfile は導入前に DESCRIPTION の名前・版・必須依存を照合します。",
     "SystemRequirements の未対応表記、複数提供元、他環境の共有ライブラリ報告を根拠にした項目は手動で確認してください。",
   ] : [
-    "対象 OS の CPython 版に対して Requires-Python、環境マーカー、wheel のタグを照合します。",
+    "調査した CPython 版と対象 OS に対して Requires-Python、環境マーカー、wheel のタグを照合します。",
     "非撤回の安定版 wheel と公開の Core Metadata を使います。ソース配布物からのビルドと、wheel が使う共有ライブラリの実測は調査範囲外です。",
     "Requires-External が公開されている場合は Ubuntu の候補を表示します。必要に応じて Ubuntu パッケージを直接指定できます。",
     "Dockerfile は仮想環境を作り、各 wheel の URL と SHA-256 を指定して pip で導入し、依存を照合します。",
   ];
   reviews.push("APT の固定候補と必須依存の組み合わせを Ubuntu 索引上で確認します。ベースの導入状態と実際の APT による導入は未確認です。");
-  if (base.status !== "ok") reviews.unshift(base.detail);
-  if (!report[language].ready) reviews.unshift(mode.label + " の依存に未解決項目があります。Dockerfile は生成できません。");
-  if (apt?.plan?.status === "conflict") reviews.unshift("APT の固定候補が競合するため、Dockerfile は生成できません。");
-  if (apt?.plan?.status === "pending") reviews.unshift("APT の固定候補を同時に確認できないため、Dockerfile の生成を保留します。");
-  if (aptError) reviews.unshift(language === "r"
-    ? "Ubuntu 索引の取得に失敗しました。APT の設定は Dockerfile に入りません。"
-    : "Ubuntu 索引の取得に失敗しました。Python の実行環境を固定できません。");
+  if (aptError && language === "r") {
+    reviews.unshift("Ubuntu 索引の取得に失敗しました。APT の設定は Dockerfile に入りません。");
+  }
   if (apt?.evidence.some((row) => row.status === "pending")) {
     reviews.unshift("索引で提供元や条件に合う Ubuntu パッケージを確認できなかった項目があります。");
   }
@@ -314,7 +310,7 @@ function render(report, dockerfile) {
   const {base, apt, aptError, requested, finishedAt, language, requestedVersion} = report;
   const mode = modes[language];
   const result = report[language];
-  const targetVersion = language === "r" ? report.rVersion : base.pythonVersion ?? requestedVersion;
+  const targetVersion = language === "r" ? report.rVersion : report.pythonVersion;
   const meta = $("result-meta");
   const conditions = element("p");
   conditions.append(element("strong", "対象"), " " + mode.label + " " + targetVersion + " / " + report.os + " / linux/arm64");
@@ -332,11 +328,14 @@ function render(report, dockerfile) {
     return block;
   };
   $("result-summary").replaceChildren(
-    stat(mode.label + " " + targetVersion, "対象バージョン"),
+    stat(mode.label + " " + targetVersion, "調査したバージョン"),
     stat(String(result.nodes.length), "依存一覧の件数"),
     stat(apt ? String(apt.pins.length) : "—", "Ubuntu の固定件数"),
   );
 
+  const versionNote = $("python-version-note");
+  versionNote.textContent = report.pythonVersionNote ?? "";
+  versionNote.hidden = !report.pythonVersionNote;
   $("docker-preview").hidden = !dockerfile;
   $("docker-preview").open = false;
   $("docker-code").textContent = dockerfile;
@@ -344,13 +343,13 @@ function render(report, dockerfile) {
   reportButton.disabled = false;
   const openApt = aptError || apt?.evidence.some((row) => row.status !== "ok") ||
     apt?.issues.length;
-  $("export-note").textContent = !dockerfile ? (
-    apt?.plan?.status === "conflict" ? "APT の固定候補が競合しています。調査記録で根拠を確認してください。" :
-    apt?.plan?.status === "pending" ? "APT の組み合わせは判定保留です。調査記録で根拠を確認してください。" :
-      "ベースイメージまたは " + mode.label + " の依存に未解決項目があるため、調査記録を確認してください。"
-  ) :
-    openApt ? "APT の要確認項目があります。調査記録とあわせて使用してください。" :
-      "参考例です。生成元の根拠と確認事項は調査記録で参照できます。";
+  const exportNote = $("export-note");
+  if (!dockerfile) {
+    exportNote.replaceChildren(element("strong", "Dockerfile を生成できません。"), list(report.dockerfileBlockers));
+  } else {
+    exportNote.textContent = openApt ? "APT の要確認項目があります。調査記録とあわせて使用してください。"
+      : "参考例です。生成元の根拠と確認事項は調査記録で参照できます。";
+  }
 
   const summaries = section("確認事項", "review-title");
   summaries.append(list(report.notes));
@@ -359,6 +358,7 @@ function render(report, dockerfile) {
   $("active").hidden = false;
   const states = new Set(result.nodes.flatMap(({status, conditionStatus}) => [status, conditionStatus]));
   if (states.has("fetch")) setStatus("fetch", "取得失敗あり");
+  else if (language === "python" && result.ready && !dockerfile) setStatus("review", "調査完了・Dockerfile 生成不可");
   else if (states.has("conflict") || base.status === "conflict" || result.cycles.length ||
     apt?.issues.some(({status}) => status === "conflict")) setStatus("conflict", "競合あり");
   else if (states.has("missing")) setStatus("missing", "見つからない項目あり");
@@ -403,8 +403,11 @@ function baseHint() {
   const node = $("base");
   const chosen = enteredVersion();
   if (selectedLanguage === "python") {
-    const base = selectPythonBase(chosen, undefined, release);
-    node.replaceChildren(element("code", base.image.split("@")[0]), " · Ubuntu 索引の CPython " + catalog[release].python);
+    if (runtimeVersion.value === "custom") {
+      node.textContent = "入力した CPython 3 の版で依存を調べます。パッチ版まで指定できます。";
+    } else {
+      node.replaceChildren(element("code", TARGETS[release].image.split("@")[0]), " · Ubuntu 索引の CPython " + catalog[release].python);
+    }
     return;
   }
   if (!R_VERSION.test(chosen)) {
@@ -506,7 +509,7 @@ form.addEventListener("submit", async (event) => {
   const inputError = $("input-error");
   inputError.hidden = true;
   if (!mode.version.test(version) || !requested.length || invalidNames.length || invalidApt.length) {
-    inputError.textContent = !mode.version.test(version) ? mode.label + " のバージョンを指定してください（" + customVersion.placeholder + "）。" :
+    inputError.textContent = !mode.version.test(version) ? (id === "python" ? "Python 3" : mode.label) + " のバージョンを指定してください（" + customVersion.placeholder + "）。" :
       !requested.length ? mode.label + " パッケージ名を 1 件以上入力してください。" :
         invalidNames.length ? mode.label + " パッケージ名の形式を確認してください — " + invalidNames.join("、") :
           "Ubuntu パッケージ名の形式を確認してください — " + invalidApt.join("、");
@@ -536,28 +539,13 @@ form.addEventListener("submit", async (event) => {
       report.sources = {rMetadata: UNIVERSE, cranSourceDistribution: CRAN};
     } else {
       const {index, error} = await aptPromise;
-      const bootstrap = pythonAptPackages(release);
-      setStatus("neutral", "Ubuntu 索引を照合中");
-      const apt = index ? inspectApt([], ubuntuRequested, index, bootstrap) : null;
-      report.base = selectPythonBase(version, index, release, apt);
-      report.pythonVersion = report.base.pythonVersion ?? null;
-      report.python = report.base.status === "ok" ? await inspectPython(requested, report.pythonVersion, progress, target.glibc) : {
-        ready: false, order: [], cycles: [], nodes: requested.map((name) =>
-          ({name, status: "pending", detail: report.base.detail, relation: "入力", incoming: []})),
-      };
-      setStatus("neutral", "Ubuntu 索引を照合中");
-      report.apt = index && report.python.nodes.some((node) => node.externalRequirements?.length)
-        ? inspectApt(report.python.nodes, ubuntuRequested, index, bootstrap) : apt;
+      Object.assign(report, await inspectPythonTarget({requested, version, ubuntuRequested, release, index, progress}));
       report.aptError = error ?? null;
-      if (report.base.status === "ok" && report.apt?.plan?.status === "ok" &&
-          (!bootstrap.every((name) => report.apt.pins.some((pin) => pin.name === name)) ||
-           pythonRuntimeFromApt(release, index, report.apt) !== report.pythonVersion)) {
-        report.base = {...report.base, status: "pending", detail: "調査に使用した Python 版と実行に必要な Ubuntu パッケージを同時に固定できません。"};
-      }
       report.sources = {pythonIndex: PYPI, wheelMetadata: "PyPI Core Metadata"};
     }
     report.finishedAt = new Date().toISOString();
     report.notes = revisions(report);
+    report.dockerfileBlockers = dockerfileBlockers(report);
     const dockerfile = makeDockerfile(report);
     render(report, dockerfile);
     latest = { report, dockerfile };

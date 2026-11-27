@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>パッケージの依存調査</title>
   <link rel="stylesheet" href="./style.css?v=os-1">
-  <script type="module" src="./app.mjs?v=catalog-1"></script>
+  <script type="module" src="./app.mjs?v=python-custom-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -52,7 +52,7 @@
             <select id="r-version" name="r-version" required aria-describedby="base"></select>
             <div id="custom-version-field" hidden>
               <label for="custom-version">バージョンを入力</label>
-              <input id="custom-version" inputmode="decimal" aria-describedby="base" disabled>
+              <input id="custom-version" spellcheck="false" autocapitalize="off" aria-describedby="base" disabled>
             </div>
           </div>
           </div>
@@ -89,13 +89,14 @@
 
         <div id="active" hidden>
           <div id="result-summary" class="result-summary"></div>
+          <p id="python-version-note" class="hint" hidden></p>
           <section class="exports" aria-labelledby="export-title">
             <h3 id="export-title">ダウンロード</h3>
             <div class="actions">
               <button type="button" class="primary" id="download-dockerfile">Dockerfile</button>
               <button type="button" class="secondary" id="download-report">調査記録（JSON）</button>
             </div>
-            <p id="export-note" class="hint"></p>
+            <div id="export-note" class="hint"></div>
             <details id="docker-preview" hidden>
               <summary>Dockerfile を表示</summary>
               <pre id="docker-code"></pre>

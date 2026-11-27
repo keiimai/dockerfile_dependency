@@ -5,9 +5,10 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import catalog from "../dist/runtime-catalog.mjs";
-import { loadAptIndex, inspectApt } from "../dist/apt-resolver.mjs";
-import { makeDockerfile, selectPythonBase, PYTHON_APT } from "../dist/dockerfile.mjs";
+import { loadAptIndex } from "../dist/apt-resolver.mjs";
+import { dockerfileBlockers, makeDockerfile, selectPythonBase, PYTHON_APT } from "../dist/dockerfile.mjs";
 import { normalizePythonName, pythonEnvironment, readRequirement, wheelCandidate } from "../dist/python-packaging.mjs";
+import { inspectPythonTarget } from "../dist/python-investigation.mjs";
 import { inspectPython, PYPI } from "../dist/python-resolver.mjs";
 
 const target = "3.12.3";
@@ -26,7 +27,7 @@ function release(name, version, {tags = "py3-none-any", deps = [], requires = ">
     "requires-python": requires, yanked}, metadata};
 }
 
-async function fixture(catalog, names, pythonVersion = target) {
+async function withPyPiFixture(catalog, investigate) {
   const previous = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (url.startsWith(PYPI)) {
@@ -42,11 +43,67 @@ async function fixture(catalog, names, pythonVersion = target) {
     throw new Error("Unexpected fetch " + url);
   };
   try {
-    return await inspectPython(names, pythonVersion, () => {});
+    return await investigate();
   } finally {
     globalThis.fetch = previous;
   }
 }
+
+function fixture(catalog, names, pythonVersion = target) {
+  return withPyPiFixture(catalog, () => inspectPython(names, pythonVersion, () => {}));
+}
+
+const pythonTarget = (version, index) => ({
+  requested: ["sample"], version, ubuntuRequested: [], release: "noble", index, progress() {},
+});
+
+test("investigates Python outside the Ubuntu runtime even when no Dockerfile can be generated", async () => {
+  const index = await loadBundledIndex();
+  const distributions = {
+    sample: [release("sample", "1.0", {
+      tags: "cp313-cp313-manylinux_2_39_aarch64", requires: ">=3.13",
+      deps: ['old-patch; python_full_version < "3.13.1"', 'new-patch; python_full_version >= "3.13.1"'],
+    })],
+    "old-patch": [release("old-patch", "1.0")],
+    "new-patch": [release("new-patch", "1.0")],
+  };
+  for (const [version, effective, dependency] of [["3.13", "3.13.0", "old-patch"], ["3.13.1", "3.13.1", "new-patch"]]) {
+    const result = await withPyPiFixture(distributions, () => inspectPythonTarget(pythonTarget(version, index)));
+    const report = {...result, language: "python", requested: ["sample"]};
+    assert.equal(result.pythonVersion, effective);
+    assert.equal(result.python.environment.python_full_version, effective);
+    assert.equal(result.python.ready, true);
+    assert.deepEqual(result.python.nodes.map(({name}) => name), ["sample", dependency]);
+    assert.equal(Boolean(result.pythonVersionNote), version === "3.13");
+    assert(!result.apt.evidence.some(({kind}) => kind === "実行環境"));
+    assert.match(dockerfileBlockers(report)[0], /Ubuntu 24\.04 の既定.*実行環境をこのサイトでは固定できません/);
+    assert.equal(makeDockerfile(report), "");
+  }
+});
+
+test("uses the requested patch for PyPI and reports the separate Ubuntu patch mismatch", async () => {
+  const index = await loadBundledIndex();
+  const minor = catalog.noble.python.split(".").slice(0, 2).join(".");
+  const version = minor + ".999";
+  const result = await withPyPiFixture({sample: [release("sample", "1.0", {requires: "==" + version})]},
+    () => inspectPythonTarget(pythonTarget(version, index)));
+  assert.equal(result.python.ready, true);
+  assert.equal(result.pythonVersion, version);
+  assert.equal(result.base.pythonVersion, catalog.noble.python);
+  const report = {...result, language: "python"};
+  assert.match(dockerfileBlockers(report)[0], /が一致しません/);
+  assert.equal(makeDockerfile(report), "");
+});
+
+test("can investigate PyPI while the Ubuntu index is unavailable", async () => {
+  const version = catalog.noble.python;
+  const result = await withPyPiFixture({sample: [release("sample", "1.0")]},
+    () => inspectPythonTarget(pythonTarget(version, undefined)));
+  assert.equal(result.python.ready, true);
+  assert.equal(result.pythonVersion, version);
+  assert.equal(result.apt, null);
+  assert.match(dockerfileBlockers({...result, language: "python"})[0], /APT 索引を取得できない/);
+});
 
 test("normalizes Python names and evaluates the target's markers and extras", () => {
   assert.equal(normalizePythonName("MarkUp_Safe"), "markup-safe");
@@ -112,24 +169,30 @@ test("refuses a wheel when its Core Metadata digest does not match", async () =>
   assert.match(result.nodes[0].detail, /SHA-256/);
 });
 
-test("pins the real Ubuntu Python runtime and emits a standalone wheel-only Dockerfile", async () => {
+async function loadBundledIndex() {
   const originalFetch = globalThis.fetch;
-  let index;
   try {
     const raw = await readFile(new URL("../dist/data/ubuntu-noble-arm64.json.gz", import.meta.url));
     globalThis.fetch = async () => new Response(raw);
-    index = await loadAptIndex();
+    return await loadAptIndex();
   } finally {
     globalThis.fetch = originalFetch;
   }
+}
+
+test("pins the real Ubuntu Python runtime and emits a standalone wheel-only Dockerfile", async () => {
+  const index = await loadBundledIndex();
   const patch = catalog.noble.python;
   const minor = patch.split(".").slice(0, 2).join(".");
   const base = selectPythonBase(minor, index);
   assert.equal(base.pythonVersion, patch);
   assert.equal(selectPythonBase(minor + ".999999", index).status, "conflict");
   assert.equal(selectPythonBase("3.999999", index).status, "pending");
-  const python = await fixture({demo: [release("demo", "1.0", {external:["libxml2"]})]}, ["demo"], patch);
-  const apt = inspectApt(python.nodes, [], index, PYTHON_APT);
+  const investigation = await withPyPiFixture({demo: [release("demo", "1.0", {external:["libxml2"]})]},
+    () => inspectPythonTarget({...pythonTarget(minor, index), requested: ["demo"]}));
+  const {python, apt} = investigation;
+  assert.equal(investigation.pythonVersion, patch);
+  assert.equal(investigation.base.status, "ok");
   assert.equal(apt.plan.status, "ok");
   assert.deepEqual(apt.pins.map(({name}) => name), PYTHON_APT);
   assert(apt.evidence.some(({kind, included}) => kind === "Requires-External" && !included));

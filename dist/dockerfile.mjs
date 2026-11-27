@@ -64,10 +64,31 @@ function aptLayer(apt, bootstrapCertificates = false) {
     "SH"];
 }
 
+export function dockerfileBlockers({language, base, r, python, apt}) {
+  const reasons = [];
+  const isPython = language === "python";
+  const runtime = isPython ? python : r;
+  if (base.status !== "ok") reasons.push(base.detail);
+  if (!runtime.ready) reasons.push((isPython ? "Python" : "R") + " の依存関係を確定できません。依存一覧で判定を確認してください。");
+  if (apt?.plan && apt.plan.status !== "ok") {
+    reasons.push(apt.plan.status === "conflict" ? "Ubuntu パッケージの固定候補が競合しています。"
+      : "Ubuntu パッケージの組み合わせを公式 APT 索引で確認できません。");
+  }
+  if (wrongAptRelease(base, apt)) reasons.push("Ubuntu の対象リリースと APT 索引が一致しません。");
+  if (!isPython || base.status !== "ok" || (apt?.plan && apt.plan.status !== "ok")) return reasons;
+
+  const pinned = new Set(apt?.pins?.map(({name}) => name));
+  if (!apt?.plan || pythonRuntimeFromApt(base.release, undefined, apt) !== base.pythonVersion ||
+      !pythonAptPackages(base.release).every((name) => pinned.has(name))) {
+    reasons.push("調査に使った CPython " + base.pythonVersion + " の実行に必要な Ubuntu パッケージを同時に固定できません。");
+  }
+  return reasons;
+}
+
 export function makeDockerfile(report) {
+  if (dockerfileBlockers(report).length) return "";
   if (report.language === "python") return makePythonDockerfile(report);
   const { base, r, apt, requested, startedAt } = report;
-  if (base.status !== "ok" || !r.ready || (apt?.plan && apt.plan.status !== "ok") || wrongAptRelease(base, apt)) return "";
   const nl = "\n";
   const lines = [
     "# syntax=docker/dockerfile:1",
@@ -141,7 +162,7 @@ export function makeDockerfile(report) {
   return lines.join(nl);
 }
 
-export const PYTHON_RUNTIME = /^\d+\.\d+(?:\.\d+)?$/;
+export const PYTHON_RUNTIME = /^3\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?$/;
 export const PYTHON_APT = pythonAptPackages("noble");
 
 export function pythonAptPackages(release, minor = TARGETS[release].python) {
@@ -163,15 +184,21 @@ export function selectPythonBase(requestedVersion, index, release = "noble", apt
     evidence: "https://hub.docker.com/_/ubuntu", requestedVersion,
   };
   if (requestedVersion.split(".").slice(0, 2).join(".") !== target.python) {
-    return {...base, status: "pending", detail: "この OS の調査対象は CPython " + target.python + " です。"};
+    return {...base, status: "pending",
+      detail: target.label + " の既定は CPython " + target.python + " 系です。指定の CPython " +
+        requestedVersion + " の実行環境をこのサイトでは固定できません。"};
+  }
+  if (index && apt?.plan?.status === "conflict") {
+    return {...base, status: "conflict", detail: "Python の実行環境に必要な Ubuntu パッケージと指定条件が競合しています。"};
   }
   const version = pythonRuntimeFromApt(release, index, apt);
   if (!version) {
-    return {...base, status: "pending", detail: "Ubuntu 索引で採用する Python のパッチ版を確認できません。"};
+    return {...base, status: "pending", detail: index ? "Ubuntu の公式 APT 索引で Python の実行環境を固定できません。"
+      : "Ubuntu の公式 APT 索引を取得できないため、Python の実行環境を固定できません。"};
   }
   if (requestedVersion !== target.python && requestedVersion !== version) {
     return {...base, pythonVersion: version, status: "conflict",
-      detail: "指定のパッチ版と、Ubuntu 索引の CPython " + version + " が一致しません。"};
+      detail: "指定の CPython " + requestedVersion + " と、Ubuntu の公式 APT 索引で固定できる CPython " + version + " が一致しません。"};
   }
   return {...base, pythonVersion: version, status: "ok",
     detail: "固定 Ubuntu イメージ。CPython " + version + " を Ubuntu 索引で確認。"};
@@ -184,9 +211,6 @@ export function pythonRuntimeFromApt(release, index, apt) {
 }
 
 function makePythonDockerfile({base, python, apt, requested, startedAt}) {
-  if (base.status !== "ok" || !python.ready || apt?.plan?.status !== "ok" ||
-      wrongAptRelease(base, apt) || pythonRuntimeFromApt(base.release, undefined, apt) !== base.pythonVersion ||
-      !pythonAptPackages(base.release).every((name) => apt.pins.some((pin) => pin.name === name))) return "";
   const wheels = python.nodes.map(({name, distribution}) =>
     name + " @ " + distribution.url + " --hash=sha256:" + distribution.sha256);
   return [
