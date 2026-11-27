@@ -4,7 +4,7 @@ name: Refresh runtime catalog and publish Pages
   push:
     branches: [main]
   schedule:
-    - cron: '37 3 * * *'
+    - cron: '37 3 * * 1'
 
 permissions: {}
 
@@ -18,17 +18,35 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: write
+    outputs:
+      publish: ${{ steps.cadence.outputs.publish }}
     steps:
+      - name: Check biweekly cadence
+        id: cadence
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          first_monday=$(date -u -d '2026-11-30 00:00:00' +%s)
+          now=$(date -u +%s)
+          if [[ "$EVENT_NAME" == push ]] || (( now >= first_monday && ((now - first_monday) / 604800) % 2 == 0 )); then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.cadence.outputs.publish == 'true'
         with:
           ref: main
       - name: Check official catalogs
+        if: github.event_name == 'schedule' && steps.cadence.outputs.publish == 'true'
         run: python3 -B tools/update_catalog.py
       - name: Validate refreshed data
+        if: steps.cadence.outputs.publish == 'true'
         run: |
           python3 -B -m unittest discover -s tests -p 'test_*.py'
           node --test tests/*.test.mjs
       - name: Commit verified updates
+        if: github.event_name == 'schedule' && steps.cadence.outputs.publish == 'true'
         run: |
           git add dist/runtime-catalog.mjs dist/data/ubuntu-*-arm64.json.gz
           if ! git diff --cached --quiet; then
@@ -36,16 +54,19 @@ jobs:
             git push origin HEAD:main
           fi
       - name: Prepare static site
+        if: steps.cadence.outputs.publish == 'true'
         run: |
           mkdir -p _tmp/pages
           cp index.html _tmp/pages/
           cp -R dist _tmp/pages/
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        if: steps.cadence.outputs.publish == 'true'
         with:
           path: _tmp/pages
 
   deploy:
     needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
