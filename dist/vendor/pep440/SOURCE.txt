@@ -1,0 +1,3 @@
+@renovatebot/pep440 6.0.1
+https://registry.npmjs.org/@renovatebot/pep440/-/pep440-6.0.1.tgz
+sha512-+pt8ngwl68ZqsTp5nhNwx3XxgfD+BIL+0tsH9vkEEFzrF5X0B//O7Vd1VInhwmcCjwOMNptjaL9HBA84++ZPrw==
