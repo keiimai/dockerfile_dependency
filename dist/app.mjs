@@ -320,6 +320,16 @@ function render(report, dockerfile) {
     badge(base.status), " ", base.detail, " ", link(base.evidence, language === "r" ? "Rocker のタグ" : "Ubuntu イメージ"));
   const time = element("p", new Date(finishedAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) + " JST");
   meta.replaceChildren(conditions, rInput, baseRow, time);
+  const stat = (value, name) => {
+    const block = element("div");
+    block.append(element("strong", value), element("span", name));
+    return block;
+  };
+  $("result-summary").replaceChildren(
+    stat(mode.label + " " + targetVersion, "対象バージョン"),
+    stat(String(result.nodes.length), "依存一覧の件数"),
+    stat(apt ? String(apt.pins.length) : "—", "Ubuntu の固定件数"),
+  );
 
   $("docker-preview").hidden = !dockerfile;
   $("docker-preview").open = false;
@@ -388,7 +398,7 @@ function baseHint() {
   const chosen = enteredVersion();
   if (selectedLanguage === "python") {
     const base = selectPythonBase(chosen);
-    node.replaceChildren(element("code", base.image), " " + base.detail);
+    node.replaceChildren(element("code", base.image.split("@")[0]));
     return;
   }
   if (!R_VERSION.test(chosen)) {
@@ -396,7 +406,7 @@ function baseHint() {
     return;
   }
   const base = selectBase(chosen);
-  node.replaceChildren(element("code", base.image ?? base.candidate), element("span", " " + base.detail));
+  node.replaceChildren(element("code", (base.image ?? base.candidate).split("@")[0]), base.status === "ok" ? "" : " " + base.detail);
 }
 
 function updateLanguageFields(versionValue) {
@@ -527,6 +537,8 @@ form.addEventListener("submit", async (event) => {
     const dockerfile = makeDockerfile(report);
     render(report, dockerfile);
     latest = { report, dockerfile };
+    const heading = $("result-title");
+    if (heading.getBoundingClientRect().top >= window.innerHeight) heading.focus();
   } catch (error) {
     clearResult();
     setStatus("fetch", "調査処理に失敗");

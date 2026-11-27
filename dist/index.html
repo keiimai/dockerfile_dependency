@@ -5,14 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="CRAN と PyPI の公開メタデータから R または Python と Ubuntu の依存を調べ、Dockerfile の参考例を生成するデモ。">
   <title>パッケージの依存調査</title>
-  <link rel="stylesheet" href="./style.css">
-  <script type="module" src="./app.mjs?v=f1b6618"></script>
+  <link rel="stylesheet" href="./style.css?v=layout-1">
+  <script type="module" src="./app.mjs?v=layout-1"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="wrap topbar-inner">
-      <a href="./" class="brand"><span class="brand-mark" aria-hidden="true">D</span> パッケージの依存調査</a>
-      <span class="topbar-purpose">Dockerfile 生成デモ</span>
+      <a href="./" class="brand"><span class="brand-mark" aria-hidden="true">D</span> Dockerfile デモ</a>
     </div>
   </header>
 
@@ -32,6 +31,7 @@
           <h2 id="input-title">調査条件</h2>
         </div>
         <form id="investigate">
+          <div class="runtime-fields">
           <div class="field">
             <label for="language">言語</label>
             <select id="language" name="language">
@@ -46,18 +46,20 @@
               <label for="custom-version">バージョンを入力</label>
               <input id="custom-version" inputmode="decimal" aria-describedby="base" disabled>
             </div>
-            <p id="base" class="hint">R の版に応じた Rocker イメージを表示します。</p>
           </div>
+          </div>
+          <p id="base" class="hint base-hint">R の版に応じた Rocker イメージを表示します。</p>
 
           <div class="field">
             <label for="packages" id="packages-label">R パッケージ名</label>
-            <textarea id="packages" name="packages" required rows="4" placeholder="ggplot2&#10;sf" spellcheck="false" autocapitalize="off" aria-describedby="package-example"></textarea>
+            <textarea id="packages" name="packages" required rows="3" placeholder="ggplot2&#10;sf" spellcheck="false" autocapitalize="off" aria-describedby="package-example"></textarea>
             <p id="package-example" class="hint">改行、カンマ、空白で区切って複数指定できます。</p>
           </div>
 
           <div class="field">
             <label for="apt-packages">Ubuntu パッケージ名 <span class="optional">任意</span></label>
-            <textarea id="apt-packages" name="apt-packages" rows="2" placeholder="例  libgdal-dev, libudunits2-dev" spellcheck="false" autocapitalize="off"></textarea>
+            <textarea id="apt-packages" name="apt-packages" rows="2" placeholder="例  libgdal-dev, libudunits2-dev" spellcheck="false" autocapitalize="off" aria-describedby="apt-help"></textarea>
+            <p id="apt-help" class="hint">追加で調べたい Ubuntu パッケージがある場合だけ入力します。</p>
           </div>
 
           <p id="input-error" class="form-error" role="alert" hidden></p>
@@ -67,18 +69,18 @@
 
       <section class="card result-card" aria-labelledby="result-title">
         <div class="card-head result-head">
-          <h2 id="result-title">依存メタデータによる調査結果</h2>
+          <h2 id="result-title" tabindex="-1">依存メタデータによる調査結果</h2>
           <span id="run-status" class="badge neutral" role="status" aria-live="polite">未調査</span>
         </div>
 
         <div id="empty" class="empty">
           <div class="empty-symbol" aria-hidden="true"><span></span><span></span><span></span></div>
           <h3>調査結果はここに表示されます</h3>
-          <p>パッケージ間の依存と版条件、Ubuntu の候補、確認事項を一覧で確認できます。</p>
+          <p>言語とバージョンを選び、パッケージ名を入力して調査を開始してください。</p>
         </div>
 
         <div id="active" hidden>
-          <div id="result-meta" class="result-meta"></div>
+          <div id="result-summary" class="result-summary"></div>
           <section class="exports" aria-labelledby="export-title">
             <h3 id="export-title">ダウンロード</h3>
             <div class="actions">
@@ -96,6 +98,10 @@
             <a href="#apt-title">Ubuntu の依存</a>
             <a href="#review-title">確認事項</a>
           </nav>
+          <details class="metadata-details">
+            <summary>調査条件とベースイメージ</summary>
+            <div id="result-meta" class="result-meta"></div>
+          </details>
           <div id="results"></div>
         </div>
       </section>
