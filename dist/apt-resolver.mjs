@@ -1,3 +1,4 @@
+import { TARGETS } from "./targets.mjs";
 import { matches } from "./r-resolver.mjs";
 
 export const APT_NAME = /^[a-z0-9][a-z0-9+.-]*$/;
@@ -96,21 +97,25 @@ function parseIndex(payload) {
   return { real, virtual, byKey, libraries, snapshot };
 }
 
-let indexPromise;
-export function loadAptIndex() {
-  if (!indexPromise) {
-    indexPromise = (async () => {
-      const url = new URL("./data/ubuntu-noble-arm64.json.gz", import.meta.url);
+const indexPromises = new Map();
+export function loadAptIndex(release = "noble") {
+  if (!Object.hasOwn(TARGETS, release)) return Promise.reject(new Error("未対応の Ubuntu リリースです"));
+  if (!indexPromises.has(release)) {
+    const pending = (async () => {
+      const url = new URL("./data/ubuntu-" + release + "-arm64.json.gz", import.meta.url);
       const res = await fetch(url);
       if (!res.ok || !res.body) throw new Error("Ubuntu 索引 HTTP " + res.status);
       const json = res.body.pipeThrough(new DecompressionStream("gzip"));
-      return parseIndex(await new Response(json).json());
+      const payload = await new Response(json).json();
+      if (payload.suites?.[0] !== release) throw new Error("Ubuntu 索引のリリースが一致しません");
+      return parseIndex(payload);
     })().catch((error) => {
-      indexPromise = undefined;
+      indexPromises.delete(release);
       throw error;
     });
+    indexPromises.set(release, pending);
   }
-  return indexPromise;
+  return indexPromises.get(release);
 }
 
 function targetArchitecture(arch) {

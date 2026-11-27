@@ -4,14 +4,21 @@
 
 GitHub アカウントや GitHub Pages の設定は不要です。調査はブラウザで行うため、R、Python、Docker のインストールも不要です。
 
-R または Python のパッケージが必要とする依存関係を調べ、Ubuntu 24.04（Noble）、`linux/arm64` 向けの Dockerfile の参考例と調査記録を作成できます。
+R または Python のパッケージが必要とする依存関係を調べ、Ubuntu 24.04 LTS または 26.04 LTS の `linux/arm64` 向けの Dockerfile の参考例と調査記録を作成できます。
 
 ## 使い方
 
-1. 言語とバージョンを選びます。Python は `3.12` が対象で、同梱の Ubuntu 索引では `3.12.3` を使用します。
+1. OS、言語、バージョンを選びます。プルダウンには OS ごとの対応版が表示されます。
 2. パッケージ名を入力します。複数指定は改行、カンマ、空白で区切れます。R は `ggplot2, sf`、Python は `requests, numpy` で試せます。追加したい Ubuntu パッケージ名が分かっている場合は、任意欄に入力します。
 3. 「調査する」を押し、依存一覧、Ubuntu パッケージの候補、確認事項を確認します。APT の依存一覧では版ごとの依存条件や代替候補を確認できます。
 4. 「Dockerfile」または「調査記録（JSON）」から保存します。Dockerfile は単体で利用できます。入力を変更すると前の調査結果が消えるので、変更後は再調査してください。
+
+画面の配色は端末やブラウザのライト／ダーク設定に自動で合わせます。
+
+| OS | Dockerfile 生成に対応する R | Python（同梱索引の実行版） |
+| --- | --- | --- |
+| Ubuntu 24.04 LTS | 4.5.2、4.5.3、4.6.0、4.6.1 | 3.12（3.12.3） |
+| Ubuntu 26.04 LTS | 4.6.2 | 3.14（3.14.4） |
 
 ## 結果を見る
 
@@ -21,7 +28,7 @@ R または Python のパッケージが必要とする依存関係を調べ、U
 
 ### 対象と制約
 
-- **R** は R-universe が提供する CRAN の公開版から依存を調べます。公開情報の反映には時間差があり、旧版の探索や Bioconductor は調査範囲外です。Dockerfile を生成できる R の版は `4.5.2`、`4.5.3`、`4.6.0`、`4.6.1` です。
+- **R** は R-universe が提供する CRAN の公開版から依存を調べます。公開情報の反映には時間差があり、旧版の探索や Bioconductor は調査範囲外です。Dockerfile に使える R の版は上の表を参照してください。
 - **Python** は PyPI の公開メタデータを使い、対象環境に合う非撤回の安定版 wheel を調べます。必要に応じて旧版も探索します。ソースからのビルドは対象外です。生成した Dockerfile では wheel の取得 URL と SHA-256 を指定します。
 - **Ubuntu** は静的な公式スナップショット索引で候補と依存条件を確認します。ベース環境にパッケージが導入済みか、共有ライブラリが実際に動作するかは、調査結果だけでは確定できません。
 - Dockerfile は参考例です。このページの調査範囲は公開メタデータで、実際の Docker ビルドやパッケージの読み込みは含みません。
@@ -32,4 +39,4 @@ R または Python のパッケージが必要とする依存関係を調べ、U
 
 - ローカルで画面を確認する場合は、リポジトリのルートで `python3 -m http.server 8765 --bind 127.0.0.1 --directory dist` を実行し、[http://127.0.0.1:8765/](http://127.0.0.1:8765/) を開きます。
 - 回帰テストは `node --test tests/*.test.mjs` で実行します。
-- Ubuntu 索引は `python3 tools/update_ubuntu.py 20261127T070249Z` で生成します。新しい索引を生成する場合は引数を UTC の `YYYYMMDDTHHMMSSZ` 形式で指定します。出力は `dist/data/ubuntu-noble-arm64.json.gz` です。取得先とスナップショット日時は調査記録に含まれます。 [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)
+- Ubuntu 索引は `python3 tools/update_ubuntu.py --release noble 20261127T070249Z` または `python3 tools/update_ubuntu.py --release resolute 20261127T130306Z` で生成します。新しい索引を生成する場合は、時刻を UTC の `YYYYMMDDTHHMMSSZ` 形式で指定します。出力は `dist/data/` の OS 別ファイルです。取得先とスナップショット日時は調査記録に含まれます。 [Ubuntu Snapshot Service](https://snapshot.ubuntu.com/)

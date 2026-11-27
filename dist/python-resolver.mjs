@@ -1,7 +1,7 @@
 import {
   compare, meetsPythonRange, normalizePythonName, pythonEnvironment, readRequirement,
   readWheelHeaders, valid, validPythonRange, wheelCandidate,
-} from "./python-packaging.mjs";
+} from "./python-packaging.mjs?v=os-1";
 
 export const PYPI = "https://pypi.org/simple/";
 const indexUrl = (name) => PYPI + encodeURIComponent(name) + "/";
@@ -12,7 +12,7 @@ async function fetchPublic(url, options = {}) {
   return fetch(url, { cache: "no-store", signal: AbortSignal.timeout(16000), ...options });
 }
 
-async function wheelsFor(name, version) {
+async function wheelsFor(name, version, glibc) {
   try {
     const response = await fetchPublic(indexUrl(name), {headers: {Accept: "application/vnd.pypi.simple.v1+json"}});
     if (response.status === 404) return {status: "missing", detail: "PyPI の索引に見つかりません（HTTP 404）。"};
@@ -21,7 +21,7 @@ async function wheelsFor(name, version) {
     if (!Array.isArray(index.files) || typeof index.name !== "string" || normalizePythonName(index.name) !== name) {
       throw new Error("PyPI の索引形式が一致しません");
     }
-    const wheels = index.files.map((file) => wheelCandidate(file, name, version)).filter(Boolean);
+    const wheels = index.files.map((file) => wheelCandidate(file, name, version, glibc)).filter(Boolean);
     wheels.sort((a, b) => compare(b.version, a.version) ||
       Number(Boolean(b.metadata)) - Number(Boolean(a.metadata)) || b.rank - a.rank);
     return {wheels};
@@ -116,7 +116,7 @@ function dependencyGraph(roots, selected, environment) {
 
 const meets = (version, incoming) => incoming.every(({condition}) => meetsPythonRange(version, condition));
 
-export async function inspectPython(roots, version, progress) {
+export async function inspectPython(roots, version, progress, glibc = 39) {
   const environment = pythonEnvironment(version);
   const indexes = new Map();
   const metadata = new Map();
@@ -144,7 +144,7 @@ export async function inspectPython(roots, version, progress) {
     if (++decisions > decisionsLimit || metadata.size >= requestsLimit || graph.entries.size > 256) {
       return failure(name, {status: "pending", limited: true, detail: "組み合わせを確認する探索が上限に達しました。"});
     }
-    if (!indexes.has(name)) indexes.set(name, wheelsFor(name, version));
+    if (!indexes.has(name)) indexes.set(name, wheelsFor(name, version, glibc));
     const index = await indexes.get(name);
     if (!index.wheels) return failure(name, index);
     const incoming = [...graph.entries.get(name).incoming.values()];
@@ -178,7 +178,7 @@ export async function inspectPython(roots, version, progress) {
     return firstFailure;
   }
 
-  for (const name of roots) indexes.set(name, wheelsFor(name, version));
+  for (const name of roots) indexes.set(name, wheelsFor(name, version, glibc));
   const rootIndexes = await Promise.all(indexes.values());
   const unavailable = rootIndexes.findIndex((index) => index.status);
   const first = unavailable < 0 ? await search(new Map()) : {

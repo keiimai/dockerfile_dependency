@@ -125,15 +125,15 @@ export function readRequirement(raw, environment, extras) {
   return {name: normalizePythonName(name), extras: extraNames.map(normalizePythonName), condition, raw, marker, role: "Requires-Dist"};
 }
 
-function platformRank(tag) {
+function platformRank(tag, glibc) {
   if (tag === "any") return 1;
   if (tag === "linux_aarch64") return 2;
   if (tag === "manylinux2014_aarch64") return 117;
   const match = tag.match(/^manylinux_2_(\d+)_aarch64$/);
-  return match && Number(match[1]) >= 17 && Number(match[1]) <= 39 ? 100 + Number(match[1]) : 0;
+  return match && Number(match[1]) >= 17 && Number(match[1]) <= glibc ? 100 + Number(match[1]) : 0;
 }
 
-export function wheelCandidate(file, project, pythonVersion) {
+export function wheelCandidate(file, project, pythonVersion, glibc = 39) {
   const filename = file.filename;
   if (typeof filename !== "string" || !/^[A-Za-z0-9_.+!-]+\.whl$/.test(filename) || file.yanked !== false) return null;
   const parts = filename.slice(0, -4).split("-");
@@ -154,7 +154,7 @@ export function wheelCandidate(file, project, pythonVersion) {
     if (abi.split(".").includes("none") && (tag === "py3" || tag === cpTag ||
         (/^py3\d+$/.test(tag) && Number(tag.slice(3)) <= minor))) abiRank = Math.max(abiRank, 10);
   }
-  const platformMatch = Math.max(...platform.split(".").map(platformRank));
+  const platformMatch = Math.max(...platform.split(".").map((tag) => platformRank(tag, glibc)));
   if (!abiRank || !platformMatch) return null;
 
   const {url, hashes} = file;

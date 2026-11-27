@@ -4,9 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="CRAN と PyPI の公開メタデータから R または Python と Ubuntu の依存を調べ、Dockerfile の参考例を生成するデモ。">
+  <meta name="color-scheme" content="light dark">
   <title>パッケージの依存調査</title>
-  <link rel="stylesheet" href="./style.css?v=layout-1">
-  <script type="module" src="./app.mjs?v=layout-1"></script>
+  <link rel="stylesheet" href="./style.css?v=os-1">
+  <script type="module" src="./app.mjs?v=os-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -18,7 +19,7 @@
   <main class="wrap">
     <section class="hero" aria-labelledby="page-title">
       <div class="environment">
-        <span>Ubuntu 24.04</span>
+        <span id="environment-os">Ubuntu 24.04</span>
         <span><code>linux/arm64</code></span>
       </div>
       <h1 id="page-title">パッケージの依存調査</h1>
@@ -31,6 +32,13 @@
           <h2 id="input-title">調査条件</h2>
         </div>
         <form id="investigate">
+          <div class="field">
+            <label for="target-os">OS</label>
+            <select id="target-os" name="target-os">
+              <option value="noble">Ubuntu 24.04 LTS</option>
+              <option value="resolute">Ubuntu 26.04 LTS</option>
+            </select>
+          </div>
           <div class="runtime-fields">
           <div class="field">
             <label for="language">言語</label>

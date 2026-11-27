@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the browser's Ubuntu Noble arm64 catalog from an official snapshot."""
+"""Build the browser's Ubuntu arm64 catalog from an official snapshot."""
 
 import argparse
 from collections import defaultdict
@@ -15,7 +15,6 @@ import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-SUITES = ("noble", "noble-updates", "noble-security")
 COMPONENTS = ("main", "restricted", "universe", "multiverse")
 FIELDS = ("Package", "Version", "Architecture", "Depends", "Pre-Depends",
           "Provides", "Multi-Arch", "Conflicts", "Breaks", "Source")
@@ -104,10 +103,11 @@ def load(source, scratch):
     return [], libraries
 
 
-def update(snapshot, scratch):
+def update(snapshot, scratch, release="noble"):
+    suites = (release, f"{release}-updates", f"{release}-security")
     base = f"https://snapshot.ubuntu.com/ubuntu/{snapshot}"
     with ThreadPoolExecutor(max_workers=6) as pool:
-        releases = list(pool.map(lambda suite: release_indexes(base, suite, scratch), SUITES))
+        releases = list(pool.map(lambda suite: release_indexes(base, suite, scratch), suites))
         sources = [source for release in releases for source in release]
         tasks = [source for source in sources if source["kind"] != "Release"]
         rows = []
@@ -123,17 +123,17 @@ def update(snapshot, scratch):
         "fetchedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "base": base,
         "architecture": "arm64",
-        "suites": SUITES,
+        "suites": suites,
         "components": COMPONENTS,
         "sources": sources,
         "fields": (*FIELDS, "Suite", "Component"),
         "packages": sorted(rows),
         "libraries": {name: sorted(names) for name, names in sorted(libraries.items())},
     }
-    staging = scratch / "ubuntu-noble-arm64.json.gz"
+    staging = scratch / f"ubuntu-{release}-arm64.json.gz"
     with gzip.open(staging, "wt", encoding="utf-8", compresslevel=8) as out:
         json.dump(data, out, ensure_ascii=False, separators=(",", ":"))
-    destination = ROOT / "dist/data/ubuntu-noble-arm64.json.gz"
+    destination = ROOT / f"dist/data/ubuntu-{release}-arm64.json.gz"
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging.replace(destination)
     print(f"{destination}: {len(rows):,} package records, {len(libraries):,} library names")
@@ -142,6 +142,7 @@ def update(snapshot, scratch):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("snapshot", help="Ubuntu snapshot UTC time, e.g. 20261127T070249Z")
+    parser.add_argument("--release", choices=("noble", "resolute"), default="noble")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", args.snapshot):
         parser.error("use YYYYMMDDTHHMMSSZ")
@@ -149,7 +150,7 @@ def main():
     work_dir = ROOT / "_tmp"
     work_dir.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="ubuntu-index-", dir=work_dir) as scratch:
-        update(args.snapshot, Path(scratch))
+        update(args.snapshot, Path(scratch), args.release)
 
 
 if __name__ == "__main__":
