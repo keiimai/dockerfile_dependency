@@ -1,11 +1,14 @@
-import catalog from "./runtime-catalog.mjs?v=cpython-source-1";
-import { TARGETS } from "./targets.mjs?v=cpython-source-1";
-import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=cpython-source-1";
-import { dockerfileBlockers, dockerfileHashes, makeDockerfile, pythonRuntimeChoice, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=cran-archive-1";
-import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=dependency-evidence-1";
-import { inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=cran-archive-1";
-import { PYPI } from "./python-resolver.mjs?v=dependency-evidence-1";
-import { CRAN, CRAN_HISTORY, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR, pinRArchive } from "./r-resolver.mjs?v=cran-archive-1";
+import catalog from "./runtime-catalog.mjs?v=verification-1";
+import { TARGETS } from "./targets.mjs?v=verification-1";
+import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=verification-1";
+import { dockerfileBlockers, dockerfileHashes, makeDockerfile, pythonRuntimeChoice, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=verification-1";
+import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=verification-1";
+import { applyPythonIndex, inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=verification-1";
+import { PYPI } from "./python-resolver.mjs?v=verification-1";
+import { CRAN, CRAN_HISTORY, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR, pinRArchive } from "./r-resolver.mjs?v=verification-1";
+
+import { minimumVersions, supportedRuntime } from "./runtime-policy.mjs";
+import { buildEvidence } from "./build-evidence.mjs";
 
 const $ = (id) => document.getElementById(id);
 const form = $("investigate");
@@ -39,6 +42,7 @@ let release = osSelect.value;
 const draftKey = () => release + "/" + selectedLanguage;
 let selectedLanguage = language.value;
 let latest;
+let generation = 0;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -321,8 +325,9 @@ function graphTable(records) {
   return details("APT の依存一覧 " + ordered.length + " 件（版別）", navigation, target);
 }
 
-function aptSection(apt, error) {
+function aptSection(apt, error, loading) {
   const block = section("Ubuntu の依存", "apt-title");
+  if (loading) { block.append(element("p", "Ubuntu 索引を取得中です。")); return block; }
   if (error) {
     block.append(badge("fetch"), element("p", error, "hint"));
     return block;
@@ -419,9 +424,16 @@ function renderRPinning(report) {
     link(distribution.url, distribution.file))));
 }
 
-function generate(report) {
+async function generate(report) {
   report.dockerfileBlockers = dockerfileBlockers(report);
-  const dockerfile = makeDockerfile(report);
+  if (report.aptLoading) report.dockerfileBlockers = ["Ubuntu 索引を照合中です。"];
+  const dockerfile = report.aptLoading ? "" : makeDockerfile(report);
+  report.buildEvidence = await buildEvidence(report, dockerfile);
+  const sources = report[report.language].nodes.filter((node) => node.distribution);
+  report.hashCoverage = {identified: sources.length, pinned: sources.filter((n) => n.distribution.sha256).length,
+    downloaded: sources.filter((n) => ["downloaded-artifact", "local-file", "cran-archive-catalog"].includes(n.distribution.hashEvidence?.method)).length};
+  report.baseHashEvidence = report.base.image ? {reference:report.base.image, source:report.base.evidence,
+    method:"catalog-image-digest", catalogSnapshot:report.catalogSnapshot} : null;
   report.dockerfileHashes = dockerfile ? dockerfileHashes(report) : null;
   return dockerfile;
 }
@@ -459,6 +471,19 @@ function render(report, dockerfile) {
   if (report.pythonVersionSource) versionNote.append(" ", link(report.pythonVersionSource, "Python.org の公開版一覧"));
   versionNote.hidden = !report.pythonVersionNote;
   renderDockerfileHashes(report.dockerfileHashes);
+  const coverage = report.hashCoverage;
+  const kind = language === "r" ? "R ソース" : "Python wheel";
+  const checks = $("verification-scope");
+  const record = report.buildEvidence;
+  const build = element("p");
+  const when = record?.checkedAt?.slice(0,10) ?? record?.date;
+  build.textContent = !record ? "この条件と一致する実ビルドの記録はありません。" :
+    record.scope === "python-runtime" ? "CPython " + record.version + " のビルド・起動を確認（" + when + "）。入力した Python パッケージの導入は未検証です。" :
+    "同じ Dockerfile の実ビルド" + (record.status === "passed" ? "成功" : "失敗") + "（" + when + "）。" + record.detail;
+  if (record?.source) build.append(" ", link(record.source, "GitHub Actions の実行記録"));
+  checks.replaceChildren(element("p", kind + "の SHA-256 は特定した配布物 " + coverage.identified + " 件中 " +
+    coverage.pinned + " 件で確認。配布物の実ファイルから計算した値は " + coverage.downloaded + " 件です。"), build);
+  $("apt-retry").hidden = !aptError || Boolean(report.aptLoading);
   renderRPinning(report);
   $("docker-preview").hidden = !dockerfile;
   $("docker-preview").open = false;
@@ -476,11 +501,12 @@ function render(report, dockerfile) {
 
   const summaries = section("確認事項", "review-title");
   summaries.append(list(report.notes));
-  results.replaceChildren(runtimeSection(result, language, mode), aptSection(apt, aptError), summaries);
+  results.replaceChildren(runtimeSection(result, language, mode), aptSection(apt, aptError, report.aptLoading), summaries);
   $("empty").hidden = true;
   $("active").hidden = false;
   const states = new Set(result.nodes.flatMap(({status, conditionStatus}) => [status, conditionStatus]));
-  if (states.has("fetch")) setStatus("fetch", "取得失敗あり");
+  if (report.aptLoading) setStatus("neutral", "言語の調査完了・Ubuntu 索引を照合中");
+  else if (states.has("fetch")) setStatus("fetch", "取得失敗あり");
   else if (!result.ready && (result.archiveSearch?.limited || result.archiveSearch?.unavailable.length)) {
     setStatus("pending", "旧版の探索に未確認あり");
   } else if (states.has("conflict") || base.status === "conflict" || result.cycles.length ||
@@ -497,6 +523,8 @@ function render(report, dockerfile) {
 }
 
 function clearResult() {
+  generation++;
+  setBusy(false);
   latest = undefined;
   dockerButton.disabled = reportButton.disabled = true;
   $("active").hidden = true;
@@ -509,10 +537,7 @@ function clearResult() {
 }
 
 function setBusy(running) {
-  for (const control of [osSelect, language, runtimeVersion, packages, aptPackages, submit]) {
-    control.disabled = running;
-  }
-  customVersion.disabled = running || runtimeVersion.value !== "custom";
+  submit.disabled = running;
   submit.textContent = running ? "調査中…" : "調査する";
 }
 
@@ -531,6 +556,10 @@ function updateCustomVersion() {
 function baseHint() {
   const node = $("base");
   const chosen = enteredVersion();
+  if (modes[selectedLanguage].version.test(chosen) && !supportedRuntime(selectedLanguage, chosen)) {
+    node.textContent = modes[selectedLanguage].label + " は " + minimumVersions[selectedLanguage] + " 以降が対象です。";
+    return;
+  }
   if (selectedLanguage === "python") {
     node.textContent = PYTHON_RUNTIME.test(chosen)
       ? "調査に使う版は Python " + pythonRuntimeChoice(chosen, release).version + " です。"
@@ -643,7 +672,7 @@ $("r-archives").addEventListener("change", async (event) => {
       }
       try {
         const pinned = await pinRArchive(node, file);
-        if (latest !== investigation) return;
+        if (latest?.report !== investigation.report) return;
         node.distribution = pinned;
         wanted.delete(file.name);
         messages.push(file.name + " — SHA-256 を記録しました。");
@@ -651,12 +680,54 @@ $("r-archives").addEventListener("change", async (event) => {
         messages.push(file.name + " — " + error.message);
       }
     }
-    if (latest !== investigation) return;
-    investigation.dockerfile = generate(investigation.report);
-    render(investigation.report, investigation.dockerfile);
+    if (latest?.report !== investigation.report) return;
+    await present(investigation.report, investigation.generation);
+    if (latest?.report !== investigation.report) return;
     status.textContent = messages.join(" ");
   } finally {
     input.disabled = false;
+  }
+});
+
+const requestIndex = (os) => loadAptIndex(os, catalog[os].snapshot)
+  .then((index) => ({index}), (error) => ({error: error.message}));
+
+async function present(report, id) {
+  if (id !== generation) return;
+  report.finishedAt = new Date().toISOString();
+  report.notes = revisions(report);
+  const dockerfile = await generate(report);
+  if (id !== generation) return;
+  render(report, dockerfile);
+  latest = {report, dockerfile, generation:id};
+}
+
+async function finishIndex(report, promise, id) {
+  const {index, error} = await promise;
+  if (id !== generation) return;
+  report.aptLoading = false;
+  report.aptError = error ?? null;
+  if (index && report.language === "python") {
+    Object.assign(report, applyPythonIndex({version:report.requestedVersion, release:report.osRelease,
+      ubuntuRequested:report.ubuntuRequested, index}, report.python));
+  } else if (index) {
+    report.apt = inspectApt(report.r.nodes, report.ubuntuRequested, index);
+  }
+  await present(report, id);
+}
+
+$("apt-retry").addEventListener("click", async () => {
+  if (!latest || latest.report.aptLoading) return;
+  const {report, generation:id} = latest;
+  report.aptLoading = true;
+  const promise = requestIndex(report.osRelease);
+  await present(report, id);
+  try { await finishIndex(report, promise, id); }
+  catch (error) {
+    if (id !== generation) return;
+    report.aptLoading = false;
+    report.aptError = error.message;
+    await present(report, id);
   }
 });
 
@@ -674,6 +745,11 @@ form.addEventListener("submit", async (event) => {
   const invalidApt = ubuntuRequested.filter((name) => !APT_NAME.test(name));
   const inputError = $("input-error");
   inputError.hidden = true;
+  if (mode.version.test(version) && !supportedRuntime(id, version)) {
+    inputError.textContent = mode.label + " は " + minimumVersions[id] + " 以降が対象です。";
+    inputError.hidden = false;
+    return;
+  }
   if (!mode.version.test(version) || !requested.length || invalidNames.length || invalidApt.length) {
     inputError.textContent = !mode.version.test(version) ? (id === "python" ? "Python 3" : mode.label) + " のバージョンを指定してください（" + customVersion.placeholder + "）。" :
       !requested.length ? mode.label + " パッケージ名を 1 件以上入力してください。" :
@@ -682,20 +758,22 @@ form.addEventListener("submit", async (event) => {
     inputError.hidden = false;
     return;
   }
+  const idOfRequest = generation;
   setBusy(true);
   setStatus("neutral", "公開メタデータ取得中");
   try {
     const startedAt = new Date().toISOString();
     const target = TARGETS[release];
-    const aptPromise = loadAptIndex(release, catalog[release].snapshot).then((index) => ({index}), (error) => ({error: error.message}));
+    const aptPromise = requestIndex(release);
     const progress = (done, total, phase) => {
+      if (idOfRequest !== generation) return;
       const text = phase === "archive" ? "CRAN 旧版の候補を照合中（" + done + " 件）" :
         phase === "hash" ? "R 配布物の SHA-256 を確認中（" + done + " / " + total + "）" :
         mode.label + " メタデータ " + done + " / " + total;
       setStatus("neutral", text);
     };
     const report = {
-      schema: 1, title: "依存メタデータによる調査結果", scope, startedAt, language: id, requestedVersion: version,
+      schema: 2, apt:null, aptLoading:true, title: "依存メタデータによる調査結果", scope, startedAt, language: id, requestedVersion: version,
       os: target.label, osRelease: release, platform: "linux/arm64", requested, ubuntuRequested,
       catalogSnapshot: catalog[release].snapshot,
     };
@@ -703,30 +781,24 @@ form.addEventListener("submit", async (event) => {
       report.base = selectBase(version, release);
       report.rVersion = version;
       report.r = await inspectR(requested, version, progress);
-      setStatus("neutral", "Ubuntu 索引を照合中");
-      const {index, error} = await aptPromise;
-      report.apt = index ? inspectApt(report.r.nodes, ubuntuRequested, index) : null;
-      report.aptError = error ?? null;
       report.sources = {rMetadata: UNIVERSE, cranSourceDistribution: CRAN, cranHistoryMirror: CRAN_HISTORY};
     } else {
-      const {index, error} = await aptPromise;
-      Object.assign(report, await inspectPythonTarget({requested, version, ubuntuRequested, release, index, progress}));
-      report.aptError = error ?? null;
+      Object.assign(report, await inspectPythonTarget({requested, version, ubuntuRequested, release, progress}));
       report.sources = {pythonIndex: PYPI, wheelMetadata: "PyPI Core Metadata"};
     }
-    report.finishedAt = new Date().toISOString();
-    report.notes = revisions(report);
-    const dockerfile = generate(report);
-    render(report, dockerfile);
-    latest = { report, dockerfile };
+    if (idOfRequest !== generation) return;
+    await present(report, idOfRequest);
+    await finishIndex(report, aptPromise, idOfRequest);
+    if (idOfRequest !== generation) return;
     const heading = $("result-title");
     if (heading.getBoundingClientRect().top >= window.innerHeight) heading.focus();
   } catch (error) {
+    if (idOfRequest !== generation) return;
     clearResult();
     setStatus("fetch", "調査処理に失敗");
     inputError.textContent = "調査を完了できませんでした — " + error.message;
     inputError.hidden = false;
   } finally {
-    setBusy(false);
+    if (idOfRequest === generation) setBusy(false);
   }
 });

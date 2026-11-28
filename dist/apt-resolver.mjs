@@ -1,4 +1,4 @@
-import { TARGETS } from "./targets.mjs?v=cpython-source-1";
+import { TARGETS } from "./targets.mjs?v=verification-1";
 import { matches } from "./r-resolver.mjs";
 
 export const APT_NAME = /^[a-z0-9][a-z0-9+.-]*$/;
@@ -105,7 +105,7 @@ export function loadAptIndex(release = "noble", snapshot) {
     const pending = (async () => {
       const url = new URL("./data/ubuntu-" + release + "-arm64.json.gz", import.meta.url);
       if (snapshot) url.searchParams.set("snapshot", snapshot);
-      const res = await fetch(url);
+      const res = await fetch(url, {signal: AbortSignal.timeout(15000)});
       if (!res.ok || !res.body) throw new Error("Ubuntu 索引 HTTP " + res.status);
       const json = res.body.pipeThrough(new DecompressionStream("gzip"));
       const payload = await new Response(json).json();
@@ -114,6 +114,7 @@ export function loadAptIndex(release = "noble", snapshot) {
       return parseAptIndex(payload);
     })().catch((error) => {
       indexPromises.delete(key);
+      if (error.name === "TimeoutError" || error.name === "AbortError") throw new Error("Ubuntu 索引の取得が15秒でタイムアウトしました。");
       throw error;
     });
     indexPromises.set(key, pending);

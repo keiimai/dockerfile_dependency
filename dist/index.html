@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>パッケージの依存調査</title>
   <link rel="stylesheet" href="./style.css?v=cpython-source-1">
-  <script type="module" src="./app.mjs?v=cran-archive-1"></script>
+  <script type="module" src="./app.mjs?v=verification-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -89,6 +89,11 @@
 
         <div id="active" hidden>
           <div id="result-summary" class="result-summary"></div>
+          <section aria-labelledby="verification-title">
+            <h3 id="verification-title">ハッシュと実ビルドの確認範囲</h3>
+            <div id="verification-scope"></div>
+            <button type="button" class="secondary" id="apt-retry" hidden>Ubuntu 索引だけ再試行</button>
+          </section>
           <p id="python-version-note" class="hint" hidden></p>
           <section id="dockerfile-hashes" aria-labelledby="dockerfile-hash-title" hidden>
             <h3 id="dockerfile-hash-title">Dockerfile に記載した SHA-256</h3>

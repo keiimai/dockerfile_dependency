@@ -9,6 +9,8 @@ import gzip
 import hashlib
 import json
 import lzma
+import os
+import subprocess
 from pathlib import Path
 import re
 import urllib.request
@@ -35,6 +37,15 @@ def release_indexes(base, suite, scratch):
     url = f"{base}/dists/{suite}/Release"
     release = scratch / f"{suite}.Release"
     release_hash = download(url, release)
+    signature = scratch / f"{suite}.Release.gpg"
+    signature_hash = download(url + ".gpg", signature)
+    keyring = os.environ.get("UBUNTU_ARCHIVE_KEYRING", "/usr/share/keyrings/ubuntu-archive-keyring.gpg")
+    result = subprocess.run(["gpgv", "--homedir", str(scratch), "--status-fd", "1",
+                             "--keyring", keyring, str(signature), str(release)],
+                            capture_output=True, text=True, check=True)
+    signers = re.findall(r"^\[GNUPG:\] VALIDSIG ([0-9A-F]+) ", result.stdout, re.M)
+    if not signers:
+        raise ValueError(f"No Ubuntu archive signature for {suite}")
     header, sha = release.read_text().split("\nSHA256:\n", 1)
     date = next(line[6:].strip() for line in header.splitlines() if line.startswith("Date: "))
     checksums = {}
@@ -44,7 +55,8 @@ def release_indexes(base, suite, scratch):
         digest, _, path = line.split()
         checksums[path] = digest
 
-    sources = [{"kind": "Release", "suite": suite, "url": url, "date": date, "sha256": release_hash}]
+    sources = [{"kind": "Release", "suite": suite, "url": url, "date": date, "sha256": release_hash,
+                "signature": {"url": url + ".gpg", "sha256": signature_hash, "signers": signers}}]
     paths = [("Packages", f"{component}/binary-arm64/Packages.xz") for component in COMPONENTS]
     paths.append(("Contents", "Contents-arm64.gz"))
     for kind, path in paths:

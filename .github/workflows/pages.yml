@@ -14,12 +14,13 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
     permissions:
       contents: write
     outputs:
       publish: ${{ steps.cadence.outputs.publish }}
+      verified_ref: ${{ steps.version.outputs.sha }}
     steps:
       - name: Check biweekly cadence
         id: cadence
@@ -36,23 +37,48 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.cadence.outputs.publish == 'true'
         with:
-          ref: main
+          ref: ${{ github.sha }}
+      - name: Verify native Docker connection
+        if: steps.cadence.outputs.publish == 'true'
+        run: |
+          docker info
+          test "$(uname -m)" = aarch64
       - name: Check official catalogs
         if: github.event_name == 'schedule' && steps.cadence.outputs.publish == 'true'
         run: python3 -B tools/update_catalog.py
+      - name: Backfill digest evidence on source changes
+        if: github.event_name == 'push' && steps.cadence.outputs.publish == 'true'
+        run: python3 -B tools/update_catalog.py --hash-provenance
+      - name: Record verified CRAN Archive artifacts
+        if: steps.cadence.outputs.publish == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT" == schedule ]]; then
+            node tools/update_archive_hashes.mjs --refresh
+          else
+            node tools/update_archive_hashes.mjs
+          fi
       - name: Validate refreshed data
         if: steps.cadence.outputs.publish == 'true'
         run: |
           python3 -B -m unittest discover -s tests -p 'test_*.py'
           node --test tests/*.test.mjs
+      - name: Build and start new CPython series on each target OS
+        if: steps.cadence.outputs.publish == 'true'
+        run: node tools/verify_python_series.mjs
       - name: Commit verified updates
-        if: github.event_name == 'schedule' && steps.cadence.outputs.publish == 'true'
+        if: steps.cadence.outputs.publish == 'true'
         run: |
-          git add dist/runtime-catalog.mjs dist/data/ubuntu-*-arm64.json.gz
+          git add dist/runtime-catalog.mjs dist/data/ubuntu-*-arm64.json.gz dist/build-records.mjs dist/archive-hashes.mjs tools/archive-cursor.txt
           if ! git diff --cached --quiet; then
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Refresh R and Python runtime catalogs'
             git push origin HEAD:main
           fi
+      - name: Record verified revision
+        id: version
+        if: steps.cadence.outputs.publish == 'true'
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Prepare static site
         if: steps.cadence.outputs.publish == 'true'
         run: |
@@ -64,8 +90,22 @@ jobs:
         with:
           path: _tmp/pages
 
-  deploy:
+  browser:
     needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.prepare.outputs.verified_ref }}
+          persist-credentials: false
+      - run: node tools/check_browser.mjs
+
+  deploy:
+    needs: [prepare, browser]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10

@@ -60,7 +60,7 @@ def version_key(version):
 def python_releases():
     entries = re.findall(r'href="/downloads/release/python-(\d+)/"[^>]*>\s*Python\s+(3\.\d+\.\d+)\s+-',
                          fetch(PYTHON_DOWNLOADS).decode())
-    versions = {version for slug, version in entries if slug == version.replace(".", "")}
+    versions = {version for slug, version in entries if slug == version.replace(".", "") and version_key(version) >= (3, 10)}
     if not versions:
         raise ValueError("Python.org did not list any stable CPython 3 releases")
     return sorted(versions, key=version_key)
@@ -84,11 +84,16 @@ def python_release_checksum(version, tarball):
     return re.sub(r"<[^>]+>|\s+", "", code[1]) if code else ""
 
 
-def python_source_hash(version, *, latest=False):
+def python_source_record(version, *, latest=False):
+    page = f"https://www.python.org/downloads/release/python-{version.replace('.', '')}/"
+
+    def record(digest, method, source):
+        return digest, {"method": method, "source": source, "checkedAt": datetime.now(timezone.utc).isoformat()}
+
     tarball = f"https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
     checksum = python_release_checksum(version, tarball) if latest else None
     if re.fullmatch(r"[a-f0-9]{64}", checksum or ""):
-        return checksum
+        return record(checksum, "python-release-sha256", page)
 
     try:
         payload = json.loads(fetch(tarball + ".sigstore"))
@@ -100,32 +105,34 @@ def python_source_hash(version, *, latest=False):
         if declared.get("algorithm") == "SHA2_256":
             digest = b64decode(declared["digest"], validate=True)
             if len(digest) == 32:
-                return digest.hex()
+                return record(digest.hex(), "sigstore-declared-digest", tarball + ".sigstore")
 
     # Some archived release pages only publish MD5. Verify the HTTPS download
     # against that value, then lock the downloaded bytes with SHA-256.
     checksum = checksum if checksum is not None else python_release_checksum(version, tarball)
     if re.fullmatch(r"[a-f0-9]{64}", checksum):
-        return checksum
+        return record(checksum, "python-release-sha256", page)
     if re.fullmatch(r"[a-f0-9]{32}", checksum):
         contents = fetch(tarball)
         if hashlib.md5(contents, usedforsecurity=False).hexdigest() != checksum:
             raise ValueError(f"Python.org checksum mismatch for CPython {version}")
-        return hashlib.sha256(contents).hexdigest()
-    return None
+        return record(hashlib.sha256(contents).hexdigest(), "artifact-sha256-after-md5", page)
+    return None, None
 
 
-def refresh_python_sources(versions, series, previous):
-    latest = {version for version in series.values() if version_key(version) >= (3, 10)}
-    missing = [version for version in versions if version_key(version) >= (3, 10)
-               and not previous.get(version)]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = pool.map(lambda version: python_source_hash(version, latest=version in latest), missing)
-        sources = {**previous, **dict(zip(missing, results))}
-    unavailable = sorted(version for version in latest if not sources.get(version))
-    if unavailable:
+def refresh_python_sources(versions, series, catalog):
+    sources = catalog.setdefault("pythonSources", {})
+    evidence = catalog.setdefault("pythonHashEvidence", {})
+    latest = set(series.values())
+    missing = [v for v in versions if not sources.get(v) or not evidence.get(v)]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for version, (digest, proof) in zip(missing, pool.map(lambda v: python_source_record(v, latest=v in latest), missing)):
+            if sources.get(version) and digest != sources[version]:
+                raise ValueError(f"Previously pinned CPython {version} digest could not be reproduced")
+            if digest:
+                sources[version], evidence[version] = digest, proof
+    if unavailable := sorted(v for v in latest if not sources.get(v)):
         raise ValueError("No official CPython SHA-256 for " + ", ".join(unavailable))
-    return sources
 
 
 def cran_versions(minimum):
@@ -190,7 +197,7 @@ def rocker_image(version, token):
 
 def refresh_r(catalog):
     known = {version for release in UBUNTU_RELEASES for version in catalog[release]["r"]}
-    candidates = [version for version in cran_versions(min(map(version_key, known))) if version not in known]
+    candidates = [version for version in cran_versions((4, 5, 1)) if version not in known]
     if not candidates:
         return
     token = rocker_token()
@@ -239,7 +246,8 @@ def refresh_ubuntu(release, target, snapshot, staging, force):
     scratch = staging / release
     scratch.mkdir()
     sources = snapshot_sources(snapshot, scratch, release)
-    if not (force or age >= REFRESH_AFTER or runtime_changed(saved, sources, scratch)):
+    signed = all(s.get("signature") for s in saved["sources"] if s["kind"] == "Release")
+    if not (force or not signed or age >= REFRESH_AFTER or runtime_changed(saved, sources, scratch)):
         return None
 
     candidate = staging / path.name
@@ -254,6 +262,7 @@ def refresh_ubuntu(release, target, snapshot, staging, force):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--hash-provenance", action="store_true", help="Backfill evidence for cataloged CPython archives")
     parser.add_argument("--snapshot", help="Official Ubuntu snapshot UTC time (YYYYMMDDTHHMMSSZ)")
     parser.add_argument("--force-index", action="store_true", help="Refresh both complete Ubuntu indexes")
     parser.add_argument("--release", choices=UBUNTU_RELEASES, help="Refresh only this Ubuntu release")
@@ -264,11 +273,16 @@ def main(argv=None):
     timestamp(snapshot)
 
     catalog = read_catalog(CATALOG)
+    if args.hash_provenance:
+        catalog["pythonSeries"] = {k:v for k,v in catalog["pythonSeries"].items() if version_key(k) >= (3, 10)}
+        refresh_python_sources(list(catalog["pythonSources"]), catalog["pythonSeries"], catalog)
+        CATALOG.write_text(PREFIX + json.dumps(catalog, indent=2, sort_keys=True) + SUFFIX)
+        return
     before = json.dumps(catalog, sort_keys=True)
     refresh_r(catalog)
     releases = python_releases()
     catalog["pythonSeries"] = python_series(releases)
-    catalog["pythonSources"] = refresh_python_sources(releases, catalog["pythonSeries"], catalog.get("pythonSources", {}))
+    refresh_python_sources(releases, catalog["pythonSeries"], catalog)
     work = ROOT / "_tmp"
     work.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="runtime-catalog-", dir=work) as temp:

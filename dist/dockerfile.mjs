@@ -1,11 +1,13 @@
-import { TARGETS } from "./targets.mjs?v=cpython-source-1";
+import { TARGETS } from "./targets.mjs?v=verification-1";
 
-import catalog from "./runtime-catalog.mjs?v=cpython-source-1";
+import catalog from "./runtime-catalog.mjs?v=verification-1";
+
+import { supportedRuntime } from "./runtime-policy.mjs";
 
 export const VERSIONS = rVersions("noble");
 
 export function rVersions(release) {
-  return Object.keys(catalog[release].r).sort((left, right) => left.localeCompare(right, "en", {numeric: true}));
+  return Object.keys(catalog[release].r).filter((v) => supportedRuntime("r", v)).sort((left, right) => left.localeCompare(right, "en", {numeric: true}));
 }
 
 export function selectBase(rVersion, release = "noble") {
@@ -77,6 +79,9 @@ export function dockerfileBlockers({language, base, r, python, apt, ubuntuReques
         (node.conditionDetail ?? node.detail ?? "依存関係を確定できません。"));
     }
     if (!problems.length || problems.length > 3) reasons.push("依存一覧で未確定の項目を確認してください。");
+  }
+  if (!isPython && !apt && r.nodes?.some((node) => node.system?.trim() || node.shlibs?.length || node.sysreqHint?.trim())) {
+    reasons.push("Ubuntu 索引で R パッケージのシステム要件を確認できません。");
   }
   if (!apt && ubuntuRequested?.length) reasons.push("Ubuntu 索引が利用できず、指定した Ubuntu パッケージを確認できません。");
   if (apt?.plan && apt.plan.status !== "ok") {
@@ -232,7 +237,8 @@ export function pythonRuntimeChoice(requestedVersion, release) {
   const minor = requestedVersion.split(".").slice(0, 2).join(".");
   const version = requestedVersion === minor ? catalog.pythonSeries[minor] ?? (minor + ".0") : requestedVersion;
   const sha256 = catalog.pythonSources?.[version];
-  const source = sha256 ? {version, url: sourceUrl(version), sha256} : null;
+  const source = sha256 ? {version, url: sourceUrl(version), sha256,
+    hashEvidence: catalog.pythonHashEvidence?.[version] ?? {method: "previous-catalog", source: sourceUrl(version), checkedAt: null}} : null;
   return {method: "source", version, source: validPythonSource(source, version) ? source : null};
 }
 

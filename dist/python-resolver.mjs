@@ -1,7 +1,7 @@
 import {
   compare, meetsPythonRange, normalizePythonName, pythonEnvironment, readRequirement,
   readWheelHeaders, sourceCandidate, valid, validPythonRange, wheelCandidate,
-} from "./python-packaging.mjs?v=dependency-evidence-1";
+} from "./python-packaging.mjs?v=verification-1";
 
 export const PYPI = "https://pypi.org/simple/";
 const indexUrl = (name) => PYPI + encodeURIComponent(name) + "/";
@@ -61,6 +61,8 @@ async function wheelMetadata(name, wheel, version) {
       throw new Error("Core Metadata の Requires-Python を満たしません");
     }
     const {metadata: _hashes, rank: _rank, ...distribution} = wheel;
+    distribution.hashEvidence = {method: "pypi-simple-api", source: indexUrl(name), field: "files[].hashes.sha256",
+      checkedAt: new Date().toISOString()};
     return {
       name, version: wheel.version, status: "ok", metadata: url, distribution,
       metadataSha256: sha256, requiresPython,

@@ -1,4 +1,7 @@
-import { readArchiveDescription, readDescription, sha256Archive } from "./r-artifact.mjs?v=cran-archive-1";
+import { readArchiveDescription, readDescription, sha256Archive } from "./r-artifact.mjs?v=verification-1";
+
+import { supportedRuntime } from "./runtime-policy.mjs";
+import archiveCatalog from "./archive-hashes.mjs";
 
 export const PACKAGE_NAME = /^[A-Za-z][A-Za-z0-9.]*$/;
 export const R_VERSION = /^\d+\.\d+\.\d+$/;
@@ -103,6 +106,7 @@ async function fetchCurrent(name, rVersion) {
     result.distribution = {
       file, current, archive, url: sha256 ? UNIVERSE_SOURCE + sha256 : current,
       repository: sha256 ? "r-universe" : "cran", sha256,
+      hashEvidence: sha256 ? {method: "r-universe-api", source: metadata, field: "_sha256", checkedAt: new Date().toISOString()} : null,
     };
     if (/^windows$/i.test(data.OS_type ?? "")) {
       result.status = "conflict";
@@ -126,7 +130,7 @@ async function archiveVersions(name) {
     .sort((a, b) => compareR(b, a));
 }
 
-async function fetchArchived(name, version) {
+export async function fetchArchived(name, version) {
   const metadata = CRAN_DESCRIPTION + name + "@" + version + "/DESCRIPTION";
   const response = await download(metadata);
   if (!response.ok) throw new Error("DESCRIPTION " + version + " — HTTP " + response.status);
@@ -151,7 +155,13 @@ function dependencyKeys(deps) {
     [role, name, operator, version].join(" ")))].sort().join("\n");
 }
 
-export async function pinRArchive(node, file) {
+export function archiveIdentity(node) {
+  return JSON.stringify([node.name, node.version, dependencyKeys(node.deps), (node.system ?? "").replace(/\s+/g, " ").trim()]);
+}
+
+const cacheKey = (url) => "cran-source-sha256-v1:" + url;
+
+export async function pinRArchive(node, file, method = "local-file") {
   const {name, version, distribution} = node;
   if (distribution.sha256) return distribution;
   const description = await readArchiveDescription(file, name);
@@ -162,13 +172,28 @@ export async function pinRArchive(node, file) {
       /^windows$/i.test(description.OS_type ?? "")) {
     throw new Error("配布物の名前・版・依存条件が、調査した DESCRIPTION と一致しません。");
   }
-  return {...distribution, sha256: await sha256Archive(file)};
+  const sha256 = await sha256Archive(file);
+  const hashEvidence = {method, source: method === "local-file" ? distribution.file : distribution.url,
+    checkedAt: new Date().toISOString()};
+  const entry = {sha256, url: distribution.url, identity: archiveIdentity(node), hashEvidence};
+  try { globalThis.localStorage?.setItem(cacheKey(entry.url), JSON.stringify(entry)); } catch { /* Storage is optional. */ }
+  return {...distribution, sha256, hashEvidence};
 }
 
 async function pinPublicArchive(node) {
+  const url = node.distribution.url;
+  let saved;
+  try { saved = JSON.parse(globalThis.localStorage?.getItem(cacheKey(url)) ?? "null"); } catch { /* Storage unavailable. */ }
+  for (const [via, entry] of [["catalog", archiveCatalog[url]], ["browser-cache", saved]]) {
+    if (entry?.url === url && entry.identity === archiveIdentity(node) && /^[a-f0-9]{64}$/.test(entry.sha256) &&
+        entry.hashEvidence?.method && entry.hashEvidence.checkedAt) {
+      node.distribution = {...node.distribution, sha256: entry.sha256, hashEvidence: {...entry.hashEvidence, reusedVia: via}};
+      return;
+    }
+  }
   try {
     const response = await fetch(node.distribution.url, {signal: AbortSignal.timeout(5000)});
-    if (response.ok) node.distribution = await pinRArchive(node, await response.blob());
+    if (response.ok) node.distribution = await pinRArchive(node, await response.blob(), "downloaded-artifact");
   } catch {
     // The selected bytes can also be checked locally from a browser-selected file.
   }
@@ -284,6 +309,7 @@ function causesOfFailure({nodes, cycles}) {
 }
 
 export async function inspectR(roots, rVersion, progress = () => {}) {
+  if (!supportedRuntime("r", rVersion)) throw new Error("R は 4.5.1 以降が対象です。");
   const current = new Map();
   const archiveLists = new Map();
   const archiveCandidates = new Map();

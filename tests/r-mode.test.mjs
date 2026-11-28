@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {createHash} from "node:crypto";
-import {gzipSync} from "node:zlib";
+import {gzipSync, gunzipSync} from "node:zlib";
+import {readFileSync} from "node:fs";
+import {inspectApt, parseAptIndex} from "../dist/apt-resolver.mjs";
 import {dockerfileBlockers, dockerfileHashes, makeDockerfile, selectBase} from "../dist/dockerfile.mjs";
 import {CRAN, CRAN_HISTORY, UNIVERSE, inspectR, pinRArchive} from "../dist/r-resolver.mjs";
 
@@ -59,6 +61,7 @@ test("pins R-universe's current source to its own content address", async (t) =>
   const r = await inspectR(["Sample"], "4.5.3");
   assert.equal(r.ready, true);
   assert.equal(calls.length, 1);
+  assert.equal(r.nodes[0].distribution.hashEvidence.method, "r-universe-api");
   const docker = makeDockerfile(report(r));
   const url = "https://cdn.r-universe.dev/" + digest;
   assert(docker.includes("install_cran 'Sample' '2.0' '" + url + "' '' '" + digest + "'"));
@@ -107,7 +110,11 @@ test("checks an archived DESCRIPTION and hashes the original gzipped artifact", 
   const expected = createHash("sha256").update(tarball).digest("hex");
   assert.equal(node.distribution.sha256, expected);
   const url = CRAN + "/Archive/Sample/Sample_1.2.tar.gz";
-  assert(makeDockerfile(report(r)).includes("install_cran 'Sample' '1.2' '" + url + "' '' '" + expected + "'"));
+  assert.equal(makeDockerfile(report(r)), "", "GDAL requires the Ubuntu index");
+  const index = parseAptIndex(JSON.parse(gunzipSync(readFileSync(new URL("../dist/data/ubuntu-noble-arm64.json.gz", import.meta.url)))));
+  const apt = inspectApt(r.nodes, [], index);
+  assert.equal(node.distribution.hashEvidence.method, "local-file");
+  assert(makeDockerfile({...report(r), apt}).includes("install_cran 'Sample' '1.2' '" + url + "' '' '" + expected + "'"));
   assert.deepEqual(dockerfileHashes(report(r)).rSources, [{name: "Sample", version: "1.2", url, sha256: expected}]);
 });
 
