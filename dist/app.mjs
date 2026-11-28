@@ -1,9 +1,9 @@
-import catalog from "./runtime-catalog.mjs?v=runtime-summary-1";
-import { TARGETS } from "./targets.mjs?v=runtime-summary-1";
-import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=runtime-summary-1";
-import { dockerfileBlockers, dockerfileHashes, makeDockerfile, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=runtime-summary-1";
+import catalog from "./runtime-catalog.mjs?v=cpython-source-1";
+import { TARGETS } from "./targets.mjs?v=cpython-source-1";
+import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=cpython-source-1";
+import { dockerfileBlockers, dockerfileHashes, makeDockerfile, pythonRuntimeChoice, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=cpython-source-1";
 import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=dependency-evidence-1";
-import { inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=runtime-summary-1";
+import { inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=cpython-source-1";
 import { PYPI } from "./python-resolver.mjs?v=dependency-evidence-1";
 import { CRAN, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR } from "./r-resolver.mjs";
 
@@ -352,6 +352,8 @@ function revisions(report) {
     "非撤回の安定版 wheel と公開の Core Metadata を使います。ソース配布物からのビルドと、wheel が使う共有ライブラリの実測は調査範囲外です。",
     "Requires-External が公開されている場合は Ubuntu の候補を表示します。必要に応じて Ubuntu パッケージを直接指定できます。",
     "Dockerfile は仮想環境を作り、各 wheel の URL と SHA-256 を指定して pip で導入し、依存を照合します。",
+    ...(report.base.runtimeMethod === "source" && report.base.pythonSource
+      ? ["CPython は Python.org の公式ソースからビルドし、Ubuntu のシステム Python とは別に導入します。"] : []),
   ];
   reviews.push("APT の固定候補と必須依存の組み合わせを Ubuntu 索引上で確認します。ベースの導入状態と実際の APT による導入は未確認です。");
   if (aptError && language === "r") {
@@ -371,6 +373,12 @@ function renderDockerfileHashes(hashes) {
   base.append("ベースイメージ ", element("code", hashes.baseImage.reference),
     element("code", hashes.baseImage.digest, "docker-digest"));
   body.append(base);
+  if (hashes.pythonSource) {
+    const source = element("p");
+    source.append(link(hashes.pythonSource.url, "CPython " + hashes.pythonSource.version + " の公式ソース"),
+      element("code", "sha256:" + hashes.pythonSource.sha256, "docker-digest"));
+    body.append(source);
+  }
   if (hashes.wheels.length) {
     const entries = element("dl");
     for (const wheel of hashes.wheels) {
@@ -485,14 +493,17 @@ function baseHint() {
   const node = $("base");
   const chosen = enteredVersion();
   if (selectedLanguage === "python") {
-    const bundled = catalog[release].python;
-    if (chosen === TARGETS[release].python || chosen === bundled) {
-      node.textContent = "Ubuntu の APT 索引で固定できる CPython " + bundled + " を使用します。";
-    } else if (PYTHON_RUNTIME.test(chosen)) {
-      const patch = catalog.pythonSeries[chosen];
-      node.textContent = "依存調査のみ。" + (patch ? "公開版 " + patch + " で調査します。" : "");
-    } else {
+    if (!PYTHON_RUNTIME.test(chosen)) {
       node.textContent = "Python 3 の系列またはパッチ版を指定できます。";
+    } else {
+      const runtime = pythonRuntimeChoice(chosen, release);
+      if (runtime.method === "apt") {
+        node.textContent = "Ubuntu の APT 索引で固定できる CPython " + runtime.version + " を使います。";
+      } else if (runtime.source) {
+        node.textContent = "CPython " + runtime.version + " を公式ソースからビルドする Dockerfile を生成できます。";
+      } else {
+        node.textContent = "依存を調査できます。Dockerfile の生成には公式ソースの SHA-256 が必要です。";
+      }
     }
     return;
   }
@@ -508,7 +519,7 @@ function updateLanguageFields(versionValue) {
   const mode = modes[selectedLanguage];
   const [first, second] = mode.example;
   const python = selectedLanguage === "python" ? pythonVersionChoices(release) : null;
-  const versions = python ? [python.defaultVersion, ...python.investigationOnly] : rVersions(release);
+  const versions = python ? [python.defaultVersion, ...python.sourceVersions, ...python.investigationOnly] : rVersions(release);
   const version = python?.defaultVersion ?? versions.at(-1);
   $("environment-os").textContent = TARGETS[release].label;
   $("version-label").textContent = mode.label + " のバージョン";
@@ -525,10 +536,15 @@ function updateLanguageFields(versionValue) {
     return option;
   });
   if (python) {
-    const group = element("optgroup");
-    group.label = "依存調査のみ";
-    group.append(...options.slice(1));
-    runtimeVersion.replaceChildren(options[0], group);
+    runtimeVersion.replaceChildren(options[0]);
+    const source = element("optgroup");
+    source.label = "公式ソースからビルド";
+    source.append(...options.slice(1, 1 + python.sourceVersions.length));
+    if (source.children.length) runtimeVersion.append(source);
+    const investigation = element("optgroup");
+    investigation.label = "依存調査のみ";
+    investigation.append(...options.slice(1 + python.sourceVersions.length));
+    if (investigation.children.length) runtimeVersion.append(investigation);
   } else {
     runtimeVersion.replaceChildren(...options);
   }

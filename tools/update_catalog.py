@@ -2,6 +2,8 @@
 """Refresh verified R images and Ubuntu's Python runtime for the static site."""
 
 import argparse
+from base64 import b64decode
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import gzip
 import hashlib
@@ -55,20 +57,75 @@ def version_key(version):
     return tuple(map(int, version.split(".")))
 
 
-def python_series():
-    releases = re.findall(r'href="/downloads/release/python-(\d+)/"[^>]*>\s*Python\s+(3\.\d+\.\d+)\s+-',
-                          fetch(PYTHON_DOWNLOADS).decode())
+def python_releases():
+    entries = re.findall(r'href="/downloads/release/python-(\d+)/"[^>]*>\s*Python\s+(3\.\d+\.\d+)\s+-',
+                         fetch(PYTHON_DOWNLOADS).decode())
+    versions = {version for slug, version in entries if slug == version.replace(".", "")}
+    if not versions:
+        raise ValueError("Python.org did not list any stable CPython 3 releases")
+    return sorted(versions, key=version_key)
+
+
+def python_series(versions=None):
     series = {}
-    for slug, version in releases:
-        parts = version.split(".")
-        if slug != "".join(parts):
-            continue
-        minor = ".".join(parts[:2])
+    for version in python_releases() if versions is None else versions:
+        minor = version.rsplit(".", 1)[0]
         if minor not in series or version_key(version) > version_key(series[minor]):
             series[minor] = version
-    if not series:
-        raise ValueError("Python.org did not list any stable CPython 3 releases")
     return series
+
+
+def python_release_checksum(version, tarball):
+    release_url = f"https://www.python.org/downloads/release/python-{version.replace('.', '')}/"
+    page = fetch(release_url).decode()
+    rows = re.findall(r"<tr\b[^>]*>.*?</tr>", page, re.S)
+    row = next((row for row in rows if f'href="{tarball}"' in row), "")
+    code = re.search(r'<code class="checksum">(.*?)</code>', row, re.S)
+    return re.sub(r"<[^>]+>|\s+", "", code[1]) if code else ""
+
+
+def python_source_hash(version, *, latest=False):
+    tarball = f"https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
+    checksum = python_release_checksum(version, tarball) if latest else None
+    if re.fullmatch(r"[a-f0-9]{64}", checksum or ""):
+        return checksum
+
+    try:
+        payload = json.loads(fetch(tarball + ".sigstore"))
+    except HTTPError as error:
+        if error.code != 404:
+            raise
+    else:
+        declared = payload.get("messageSignature", {}).get("messageDigest", {})
+        if declared.get("algorithm") == "SHA2_256":
+            digest = b64decode(declared["digest"], validate=True)
+            if len(digest) == 32:
+                return digest.hex()
+
+    # Some archived release pages only publish MD5. Verify the HTTPS download
+    # against that value, then lock the downloaded bytes with SHA-256.
+    checksum = checksum if checksum is not None else python_release_checksum(version, tarball)
+    if re.fullmatch(r"[a-f0-9]{64}", checksum):
+        return checksum
+    if re.fullmatch(r"[a-f0-9]{32}", checksum):
+        contents = fetch(tarball)
+        if hashlib.md5(contents, usedforsecurity=False).hexdigest() != checksum:
+            raise ValueError(f"Python.org checksum mismatch for CPython {version}")
+        return hashlib.sha256(contents).hexdigest()
+    return None
+
+
+def refresh_python_sources(versions, series, previous):
+    latest = {version for version in series.values() if version_key(version) >= (3, 10)}
+    missing = [version for version in versions if version_key(version) >= (3, 10)
+               and not previous.get(version)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = pool.map(lambda version: python_source_hash(version, latest=version in latest), missing)
+        sources = {**previous, **dict(zip(missing, results))}
+    unavailable = sorted(version for version in latest if not sources.get(version))
+    if unavailable:
+        raise ValueError("No official CPython SHA-256 for " + ", ".join(unavailable))
+    return sources
 
 
 def cran_versions(minimum):
@@ -209,7 +266,9 @@ def main(argv=None):
     catalog = read_catalog(CATALOG)
     before = json.dumps(catalog, sort_keys=True)
     refresh_r(catalog)
-    catalog["pythonSeries"] = python_series()
+    releases = python_releases()
+    catalog["pythonSeries"] = python_series(releases)
+    catalog["pythonSources"] = refresh_python_sources(releases, catalog["pythonSeries"], catalog.get("pythonSources", {}))
     work = ROOT / "_tmp"
     work.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="runtime-catalog-", dir=work) as temp:

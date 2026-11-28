@@ -1,4 +1,4 @@
-import { TARGETS } from "./targets.mjs?v=runtime-summary-1";
+import { TARGETS } from "./targets.mjs?v=cpython-source-1";
 import { matches } from "./r-resolver.mjs";
 
 export const APT_NAME = /^[a-z0-9][a-z0-9+.-]*$/;

@@ -6,7 +6,7 @@ import test from "node:test";
 
 import catalog from "../dist/runtime-catalog.mjs";
 import { loadAptIndex } from "../dist/apt-resolver.mjs";
-import { dockerfileBlockers, dockerfileHashes, makeDockerfile, selectPythonBase, PYTHON_APT } from "../dist/dockerfile.mjs";
+import { dockerfileBlockers, dockerfileHashes, makeDockerfile, pythonBuildPackages, selectPythonBase, PYTHON_APT } from "../dist/dockerfile.mjs";
 import { normalizePythonName, pythonEnvironment, readRequirement, wheelCandidate } from "../dist/python-packaging.mjs";
 import { inspectPythonTarget, pythonVersionChoices } from "../dist/python-investigation.mjs";
 import { inspectPython, PYPI } from "../dist/python-resolver.mjs";
@@ -57,7 +57,7 @@ const pythonTarget = (version, index) => ({
   requested: ["sample"], version, ubuntuRequested: [], release: "noble", index, progress() {},
 });
 
-test("investigates Python outside the Ubuntu runtime even when no Dockerfile can be generated", async () => {
+test("generates a pinned source-build Dockerfile for other Python series and exact patches", async () => {
   const index = await loadBundledIndex();
   const distributions = {
     sample: [release("sample", "1.0", {
@@ -69,8 +69,8 @@ test("investigates Python outside the Ubuntu runtime even when no Dockerfile can
   };
   const recent = catalog.pythonSeries["3.13"];
   const choices = pythonVersionChoices("noble");
-  assert(choices.investigationOnly.length > 0);
-  assert(choices.investigationOnly.every((version) => catalog.pythonSeries[version]));
+  assert(choices.sourceVersions.length > 0);
+  assert(choices.sourceVersions.every((version) => catalog.pythonSources[catalog.pythonSeries[version]]));
   for (const [version, effective, dependency] of [["3.13", recent, "new-patch"], ["3.13.0", "3.13.0", "old-patch"]]) {
     const result = await withPyPiFixture(distributions, () => inspectPythonTarget(pythonTarget(version, index)));
     const report = {...result, language: "python", requested: ["sample"]};
@@ -80,13 +80,28 @@ test("investigates Python outside the Ubuntu runtime even when no Dockerfile can
     assert.deepEqual(result.python.nodes.map(({name}) => name), ["sample", dependency]);
     assert.equal(Boolean(result.pythonVersionNote), version === "3.13");
     assert.equal(result.pythonVersionSource, version === "3.13" ? "https://www.python.org/downloads/source/" : null);
-    assert(!result.apt.evidence.some(({kind}) => kind === "実行環境"));
-    assert.match(dockerfileBlockers(report)[0], /Ubuntu 24\.04 の既定.*実行環境をこのサイトでは固定できません/);
-    assert.equal(makeDockerfile(report), "");
+    assert.equal(result.base.runtimeMethod, "source");
+    assert.equal(result.apt.plan.status, "ok");
+    assert.deepEqual(result.apt.pins.map(({name}) => name), pythonBuildPackages);
+    assert.deepEqual(dockerfileBlockers(report), []);
+    const dockerfile = makeDockerfile(report);
+    const hashes = dockerfileHashes(report);
+    assert.equal(hashes.pythonSource.sha256, catalog.pythonSources[effective]);
+    assert(dockerfile.includes(hashes.pythonSource.url));
+    assert(dockerfile.includes(hashes.pythonSource.sha256));
+    assert.match(dockerfile, /sha256sum --check -/);
+    assert.match(dockerfile, /\/opt\/cpython\/bin\/python3 -m venv/);
+    assert(!dockerfile.includes("'python3-venv="));
+    assert.equal(makeDockerfile({...report, base: {...report.base,
+      pythonSource: {...report.base.pythonSource, sha256: "f".repeat(64)}}}), "");
+    assert.equal(makeDockerfile({...report, apt: {...result.apt, pins: result.apt.pins.slice(1)}}), "");
+    for (const [, shell] of dockerfile.matchAll(/^RUN <<'SH'\n(.*?)^SH$/gms)) {
+      assert.equal(spawnSync("/bin/sh", ["-n"], {input: shell}).status, 0);
+    }
   }
 });
 
-test("uses the requested patch for PyPI and reports the separate Ubuntu patch mismatch", async () => {
+test("investigates a patch with no official source hash without generating a Dockerfile", async () => {
   const index = await loadBundledIndex();
   const minor = catalog.noble.python.split(".").slice(0, 2).join(".");
   const version = minor + ".999";
@@ -94,9 +109,9 @@ test("uses the requested patch for PyPI and reports the separate Ubuntu patch mi
     () => inspectPythonTarget(pythonTarget(version, index)));
   assert.equal(result.python.ready, true);
   assert.equal(result.pythonVersion, version);
-  assert.equal(result.base.pythonVersion, catalog.noble.python);
+  assert.equal(result.base.status, "pending");
   const report = {...result, language: "python"};
-  assert.match(dockerfileBlockers(report)[0], /が一致しません/);
+  assert.match(dockerfileBlockers(report)[0], /公式ソースの SHA-256 を確認できません/);
   assert.equal(makeDockerfile(report), "");
 });
 
@@ -222,7 +237,7 @@ test("pins the real Ubuntu Python runtime and emits a standalone wheel-only Dock
   assert(!choices.investigationOnly.includes(minor));
   const base = selectPythonBase(minor, index);
   assert.equal(base.pythonVersion, patch);
-  assert.equal(selectPythonBase(minor + ".999999", index).status, "conflict");
+  assert.equal(selectPythonBase(minor + ".999999", index).status, "pending");
   assert.equal(selectPythonBase("3.999999", index).status, "pending");
   const investigation = await withPyPiFixture({demo: [release("demo", "1.0", {external:["libxml2"]})]},
     () => inspectPythonTarget({...pythonTarget(minor, index), requested: ["demo"]}));
@@ -237,6 +252,7 @@ test("pins the real Ubuntu Python runtime and emits a standalone wheel-only Dock
   assert(text.includes("python" + minor + "="));
   const hashes = dockerfileHashes(request);
   assert(text.includes("FROM " + hashes.baseImage.reference + "@" + hashes.baseImage.digest));
+  assert.equal(hashes.pythonSource, null);
   assert.deepEqual(hashes.wheels.map(({name}) => name), ["demo"]);
   assert(text.includes(hashes.wheels[0].url + " --hash=sha256:" + hashes.wheels[0].sha256));
   assert.equal(makeDockerfile({...request, base: {...base, pythonVersion: minor + ".999999"}}), "");

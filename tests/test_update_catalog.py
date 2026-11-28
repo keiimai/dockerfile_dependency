@@ -26,6 +26,26 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(updater.python_series(), {"3.13": "3.13.10", "3.14": "3.14.0"})
             fetch.assert_called_once_with(updater.PYTHON_DOWNLOADS)
 
+    def test_reads_sha256_for_the_correct_source_artifact(self):
+        digest = "a" * 32 + "b" * 32
+        url = "https://www.python.org/ftp/python/3.13.10/Python-3.13.10.tgz"
+        page = f'<tr><td><a href="{url}">Gzipped source</a></td><td><code class="checksum">' \
+               f'<span>{digest[:32]}</span><wbr><span>{digest[32:]}</span></code></td></tr>'
+        with patch.object(updater, "fetch", return_value=page.encode()):
+            self.assertEqual(updater.python_source_hash("3.13.10", latest=True), digest)
+
+    def test_checks_an_archived_source_against_its_published_checksum(self):
+        url = "https://www.python.org/ftp/python/3.10.0/Python-3.10.0.tgz"
+        contents = b"source"
+        checksum = hashlib.md5(contents, usedforsecurity=False).hexdigest()
+        page = f'<tr><a href="{url}">Source</a><code class="checksum">{checksum}</code></tr>'
+        missing = HTTPError(url, 404, "", {}, None)
+        with patch.object(updater, "fetch", side_effect=[missing, page.encode(), contents]):
+            self.assertEqual(updater.python_source_hash("3.10.0"), hashlib.sha256(contents).hexdigest())
+        with patch.object(updater, "fetch", side_effect=[missing, page.encode(), b"modified"]):
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                updater.python_source_hash("3.10.0")
+
     def test_finds_stable_releases_across_r_major_versions(self):
         with patch.object(updater, "fetch", side_effect=[
             b'<a href="R-4/">R-4</a><a href="R-5/">R-5</a>',

@@ -1,6 +1,6 @@
-import { TARGETS } from "./targets.mjs?v=runtime-summary-1";
+import { TARGETS } from "./targets.mjs?v=cpython-source-1";
 
-import catalog from "./runtime-catalog.mjs?v=runtime-summary-1";
+import catalog from "./runtime-catalog.mjs?v=cpython-source-1";
 
 export const VERSIONS = rVersions("noble");
 
@@ -87,8 +87,14 @@ export function dockerfileBlockers({language, base, r, python, apt, ubuntuReques
   if (!isPython || base.status !== "ok" || (apt?.plan && apt.plan.status !== "ok")) return reasons;
 
   const pinned = new Set(apt?.pins?.map(({name}) => name));
-  if (!apt?.plan || pythonRuntimeFromApt(base.release, undefined, apt) !== base.pythonVersion ||
-      !pythonAptPackages(base.release).every((name) => pinned.has(name))) {
+  const source = base.runtimeMethod === "source";
+  const required = source ? pythonBuildPackages : pythonAptPackages(base.release);
+  const runtimeMatches = source
+    ? validPythonSource(base.pythonSource, base.pythonVersion)
+    : pythonRuntimeFromApt(base.release, undefined, apt) === base.pythonVersion;
+  const investigated = python.environment?.python_full_version;
+  if (!apt?.plan || !runtimeMatches || (investigated && investigated !== base.pythonVersion) ||
+      !required.every((name) => pinned.has(name))) {
     reasons.push("調査に使った CPython " + base.pythonVersion + " の実行に必要な Ubuntu パッケージを同時に固定できません。");
   }
   return reasons;
@@ -186,24 +192,58 @@ function wrongAptRelease(base, apt) {
   return Boolean(apt?.snapshot?.suites && apt.snapshot.suites[0] !== base.release);
 }
 
+export const pythonBuildPackages = [
+  "ca-certificates", "curl", "build-essential", "pkg-config", "libssl-dev", "zlib1g-dev",
+  "libbz2-dev", "liblzma-dev", "libsqlite3-dev", "libreadline-dev", "libffi-dev", "libncurses-dev",
+  "libgdbm-dev", "libgdbm-compat-dev", "libexpat1-dev", "uuid-dev", "libzstd-dev",
+];
+
+function sourceUrl(version) {
+  return "https://www.python.org/ftp/python/" + version + "/Python-" + version + ".tgz";
+}
+
+function validPythonSource(source, version) {
+  return Boolean(source) && source.version === version && source.url === sourceUrl(version) &&
+    /^[a-f0-9]{64}$/.test(source.sha256) && source.sha256 === catalog.pythonSources?.[version];
+}
+
+export function pythonRuntimeChoice(requestedVersion, release) {
+  const defaultPatch = catalog[release].python;
+  if (requestedVersion === TARGETS[release].python || requestedVersion === defaultPatch) {
+    return {method: "apt", version: defaultPatch};
+  }
+  const minor = requestedVersion.split(".").slice(0, 2).join(".");
+  const version = requestedVersion === minor ? catalog.pythonSeries[minor] ?? (minor + ".0") : requestedVersion;
+  const sha256 = catalog.pythonSources?.[version];
+  const source = sha256 ? {version, url: sourceUrl(version), sha256} : null;
+  return {method: "source", version, source: validPythonSource(source, version) ? source : null};
+}
+
 export function selectPythonBase(requestedVersion, index, release = "noble", apt) {
   const target = TARGETS[release];
+  const runtime = pythonRuntimeChoice(requestedVersion, release);
   const base = {
     image: target.image, os: target.label, osVersion: target.version, release, platform: "linux/arm64",
-    evidence: "https://hub.docker.com/_/ubuntu", requestedVersion,
+    evidence: "https://hub.docker.com/_/ubuntu", requestedVersion, runtimeMethod: runtime.method,
   };
-  if (requestedVersion.split(".").slice(0, 2).join(".") !== target.python) {
-    return {...base, status: "pending",
-      detail: target.label + " の既定は CPython " + target.python + " 系です。指定の CPython " +
-        requestedVersion + " の実行環境をこのサイトでは固定できません。"};
+  if (runtime.method === "source" && !runtime.source) {
+    return {...base, status: "pending", detail: "CPython " + runtime.version + " の公式ソースの SHA-256 を確認できません。"};
   }
-  if (index && apt?.plan?.status === "conflict") {
-    return {...base, status: "conflict", detail: "Python の実行環境に必要な Ubuntu パッケージと指定条件が競合しています。"};
+  if (!index) {
+    return {...base, status: "pending", detail: "Ubuntu の公式 APT 索引を取得できないため、Python の実行環境を固定できません。"};
+  }
+  if (apt?.plan?.status && apt.plan.status !== "ok") {
+    return {...base, status: apt.plan.status, detail: "Python の実行環境に必要な Ubuntu パッケージを固定できません。"};
+  }
+  if (runtime.method === "source") {
+    return {
+      ...base, status: "ok", pythonVersion: runtime.version, pythonSource: runtime.source,
+      detail: "固定 Ubuntu イメージに CPython " + runtime.version + " を Python.org の公式ソースからビルドします。",
+    };
   }
   const version = pythonRuntimeFromApt(release, index, apt);
   if (!version) {
-    return {...base, status: "pending", detail: index ? "Ubuntu の公式 APT 索引で Python の実行環境を固定できません。"
-      : "Ubuntu の公式 APT 索引を取得できないため、Python の実行環境を固定できません。"};
+    return {...base, status: "pending", detail: "Ubuntu の公式 APT 索引で Python の実行環境を固定できません。"};
   }
   if (requestedVersion !== target.python && requestedVersion !== version) {
     return {...base, pythonVersion: version, status: "conflict",
@@ -229,11 +269,36 @@ export function dockerfileHashes({base, language, python}) {
   const [reference, digest] = base.image.split("@");
   return {
     baseImage: {reference, digest},
+    pythonSource: language === "python" ? base.pythonSource ?? null : null,
     wheels: language === "python" ? pythonWheelArtifacts(python) : [],
   };
 }
 
+function cpythonLayer({url, sha256, version}) {
+  return [
+    "",
+    "# 指定した CPython の公式ソースを固定。Ubuntu のシステム Python とは別の場所に導入します。",
+    "RUN <<'SH'",
+    "set -eu",
+    "work=$(mktemp -d)",
+    'trap \'rm -rf "$work"\' EXIT',
+    'tarball="$work/Python.tgz"',
+    "curl -fsSL --retry 2 '" + url + "' -o \"$tarball\"",
+    "printf '%s  %s\\n' '" + sha256 + "' \"$tarball\" | sha256sum --check -",
+    'tar -xzf "$tarball" -C "$work"',
+    'cd "$work/Python-' + version + '"',
+    "./configure --prefix=/opt/cpython --with-ensurepip=no",
+    "jobs=$(nproc)",
+    'if [ "$jobs" -gt 6 ]; then jobs=6; fi',
+    'make -j"$jobs"',
+    "make install",
+    "/opt/cpython/bin/python3 -c 'import ssl, sqlite3, zlib, bz2, lzma, ctypes, readline, venv'",
+    "SH",
+  ];
+}
+
 function makePythonDockerfile({base, python, apt, requested, startedAt}) {
+  const interpreter = base.runtimeMethod === "source" ? "/opt/cpython/bin/python3" : "python3";
   const wheels = pythonWheelArtifacts(python).map(({name, url, sha256}) =>
     name + " @ " + url + " --hash=sha256:" + sha256);
   return [
@@ -254,13 +319,14 @@ function makePythonDockerfile({base, python, apt, requested, startedAt}) {
     'test "$(dpkg --print-architecture)" = arm64',
     "SH",
     ...aptLayer(apt, true),
+    ...(base.pythonSource ? cpythonLayer(base.pythonSource) : []),
     "",
     "ENV VIRTUAL_ENV=/opt/python",
     'ENV PATH="/opt/python/bin:$PATH"',
     "RUN <<'SH'",
     "set -eu",
-    'test "$(python3 -c \'import platform; print(platform.python_version())\')" = ' + base.pythonVersion,
-    'python3 -m venv "$VIRTUAL_ENV"',
+    'test "$(' + interpreter + ' -c \'import platform; print(platform.python_version())\')" = ' + base.pythonVersion,
+    interpreter + ' -m venv "$VIRTUAL_ENV"',
     "work=$(mktemp -d)",
     'trap \'rm -rf "$work"\' EXIT',
     'cat > "$work/requirements.txt" <<\'WHEELS\'',

@@ -1,4 +1,4 @@
-import catalog from "./runtime-catalog.mjs?v=runtime-summary-1";
+import catalog from "./runtime-catalog.mjs?v=cpython-source-1";
 
 export const TARGETS = {
   noble: {

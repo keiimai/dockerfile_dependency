@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { loadAptIndex, inspectApt } from "../dist/apt-resolver.mjs";
-import { dockerfileHashes, makeDockerfile, pythonAptPackages, rVersions, selectBase, selectPythonBase } from "../dist/dockerfile.mjs";
+import { dockerfileHashes, makeDockerfile, pythonAptPackages, pythonBuildPackages, rVersions, selectBase, selectPythonBase } from "../dist/dockerfile.mjs";
+import { pythonVersionChoices } from "../dist/python-investigation.mjs";
 import { wheelCandidate } from "../dist/python-packaging.mjs";
 import catalog from "../dist/runtime-catalog.mjs";
 import { TARGETS } from "../dist/targets.mjs";
@@ -45,6 +46,14 @@ test("uses a separate official index and fixed images for each OS", async () => 
       assert.equal(base.pythonVersion, patch);
       assert.equal(base.image, target.image);
       assert.match(index.real.get("libc6")[0].version, new RegExp("^2\\." + target.glibc + "[-+]"));
+      const sourcePlan = inspectApt([], [], index, pythonBuildPackages);
+      assert.equal(sourcePlan.plan.status, "ok");
+      for (const version of pythonVersionChoices(release).sourceVersions) {
+        const source = selectPythonBase(version, index, release, sourcePlan);
+        assert.equal(source.status, "ok");
+        assert.equal(source.pythonVersion, catalog.pythonSeries[version]);
+        assert.equal(source.pythonSource.sha256, catalog.pythonSources[source.pythonVersion]);
+      }
       const report = {base: selectBase(rVersion, release), apt, r: {ready: true, order: []}, requested: ["stats"]};
       const docker = makeDockerfile(report);
       assert(docker.includes('test "$ID:$VERSION_ID" = ubuntu:' + target.version));

@@ -169,6 +169,7 @@ select, input { min-height: 44px; }
 #dockerfile-hashes { border-top: 1px solid var(--border); padding-top: 10px; margin-bottom: 14px; }
 #dockerfile-hashes h3 { margin-bottom: 6px; }
 #dockerfile-hash-list { font-size: .875rem; }
+#dockerfile-hash-list p + p { margin-top: 8px; }
 #dockerfile-hash-list details { margin-top: 8px; }
 #dockerfile-hash-list dl { margin: 8px 0 0; display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: 4px 12px; }
 #dockerfile-hash-list dd { margin: 0; }
