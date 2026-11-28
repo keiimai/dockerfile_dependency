@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark">
   <title>パッケージの依存調査</title>
   <link rel="stylesheet" href="./style.css?v=cpython-source-1">
-  <script type="module" src="./app.mjs?v=version-labels-1"></script>
+  <script type="module" src="./app.mjs?v=cran-archive-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -101,6 +101,14 @@
               <button type="button" class="secondary" id="download-report">調査記録（JSON）</button>
             </div>
             <div id="export-note" class="hint"></div>
+            <section id="r-source-pinning" aria-labelledby="r-pinning-title" hidden>
+              <h4 id="r-pinning-title">R の配布物を照合</h4>
+              <p class="hint">次のリンクから配布物を保存し、ファイルを選ぶと SHA-256 を計算します。ファイルはこのブラウザ内で読み取ります。</p>
+              <div id="r-pinning-files"></div>
+              <label for="r-archives">保存した CRAN の .tar.gz</label>
+              <input id="r-archives" type="file" accept=".gz,application/gzip" multiple>
+              <p id="r-pin-status" class="hint" role="status"></p>
+            </section>
             <details id="docker-preview" hidden>
               <summary>Dockerfile を表示</summary>
               <pre id="docker-code"></pre>

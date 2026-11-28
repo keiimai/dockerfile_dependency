@@ -1,11 +1,11 @@
 import catalog from "./runtime-catalog.mjs?v=cpython-source-1";
 import { TARGETS } from "./targets.mjs?v=cpython-source-1";
 import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=cpython-source-1";
-import { dockerfileBlockers, dockerfileHashes, makeDockerfile, pythonRuntimeChoice, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=version-labels-1";
+import { dockerfileBlockers, dockerfileHashes, makeDockerfile, pythonRuntimeChoice, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=cran-archive-1";
 import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=dependency-evidence-1";
-import { inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=version-labels-1";
+import { inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=cran-archive-1";
 import { PYPI } from "./python-resolver.mjs?v=dependency-evidence-1";
-import { CRAN, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR } from "./r-resolver.mjs";
+import { CRAN, CRAN_HISTORY, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR, pinRArchive } from "./r-resolver.mjs?v=cran-archive-1";
 
 const $ = (id) => document.getElementById(id);
 const form = $("investigate");
@@ -132,7 +132,7 @@ function runtimeTable(result, id, label) {
     }
     if (node.metadata) {
       const metadata = element("p");
-      metadata.append(link(node.metadata, "公開メタデータ"));
+      metadata.append(link(node.metadata, node.distribution?.repository === "archive" ? "旧版の DESCRIPTION" : "公開メタデータ"));
       sources.push(metadata);
     }
     if (node.distribution) {
@@ -141,8 +141,13 @@ function runtimeTable(result, id, label) {
         artifact.append(link(node.distribution.url, "PyPI の wheel"));
         sources.push(artifact, details("wheel の SHA-256", element("code", node.distribution.sha256)));
       } else {
-        artifact.append(link(node.distribution.current, "CRAN 配布物"), " · ", link(node.distribution.archive, "Archive"));
+        const {url, archive, repository, sha256} = node.distribution;
+        const title = repository === "archive" ? "CRAN Archive の配布物" :
+          repository === "r-universe" ? "R-universe のソース配布物" : "CRAN のソース配布物";
+        artifact.append(link(url, title));
+        if (repository === "cran") artifact.append(" · ", link(archive, "CRAN Archive"));
         sources.push(artifact);
+        if (sha256) sources.push(details("配布物の SHA-256", element("code", sha256, "docker-digest")));
       }
     }
     if (node.sourceDistribution) {
@@ -172,8 +177,17 @@ function runtimeTable(result, id, label) {
 function runtimeSection(result, id, mode) {
   const title = mode.label + " の依存";
   const block = section(title, id + "-title");
-  block.append(element("p", result.nodes.length + " 件。依存元と版条件は各行で確認できます。", "hint"),
-    runtimeTable(result, id, title + "一覧"));
+  block.append(element("p", result.nodes.length + " 件。依存元と版条件は各行で確認できます。", "hint"));
+  const search = result.archiveSearch;
+  if (search?.packages) {
+    const adopted = result.nodes.filter((node) => node.distribution?.repository === "archive").length;
+    block.append(element("p", "CRAN の旧版を " + search.packages + " パッケージで検索し、" +
+      search.candidates + " 候補を照合しました。採用した旧版は " + adopted + " 件です。", "hint"));
+    if (search.limited) block.append(element("p", "旧版の探索上限に達したため、他の組み合わせは未確認です。", "hint"));
+    if (search.unavailable.length) block.append(details("取得できなかった旧版情報",
+      list(search.unavailable.map(({name, reason}) => name + " — " + reason))));
+  }
+  block.append(runtimeTable(result, id, title + "一覧"));
   if (result.individual?.length) {
     const partial = details("個別の入力で確認できた依存",
       element("p", "各パッケージを単独で調査した結果です。全体の組み合わせは未確定です。", "hint"));
@@ -343,9 +357,9 @@ function aptSection(apt, error) {
 function revisions(report) {
   const { apt, aptError, language } = report;
   const reviews = language === "r" ? [
-    "R は CRAN 公開版 API の取得時点の候補を対象とします。旧版の組み合わせは調査対象外です。",
+    "R は CRAN 公開版の候補を優先します。条件を満たさない場合は CRAN の公開履歴ミラーから旧版の DESCRIPTION を調べます。",
     "R の同梱標準パッケージは R 本体と同じ版として扱います。推奨パッケージは公開版を調査します。",
-    "ソース URL を版で固定し、生成した Dockerfile は導入前に DESCRIPTION の名前・版・必須依存を照合します。",
+    "Dockerfile は取得元と SHA-256 を固定し、導入前に配布物のハッシュと DESCRIPTION の名前・版・必須依存を照合します。",
     "SystemRequirements の未対応表記、複数提供元、他環境の共有ライブラリ報告を根拠にした項目は手動で確認してください。",
   ] : [
     "調査した CPython 版と対象 OS に対して Requires-Python、環境マーカー、wheel のタグを照合します。",
@@ -377,17 +391,39 @@ function renderDockerfileHashes(hashes) {
       element("code", "sha256:" + hashes.pythonSource.sha256, "docker-digest"));
     body.append(source);
   }
-  if (hashes.wheels.length) {
+  for (const [label, artifacts] of [["R ソース配布物", hashes.rSources], ["Python wheel", hashes.wheels]]) {
+    if (!artifacts.length) continue;
     const entries = element("dl");
-    for (const wheel of hashes.wheels) {
+    for (const {name, version, sha256, url} of artifacts) {
       const digest = element("dd");
-      digest.append(element("code", "sha256:" + wheel.sha256, "docker-digest"));
-      entries.append(element("dt", wheel.name + " " + wheel.version), digest);
+      digest.append(element("code", "sha256:" + sha256, "docker-digest"));
+      const artifact = element("dt");
+      artifact.append(link(url, name + " " + version));
+      entries.append(artifact, digest);
     }
-    const wheelHashes = details("Python wheel " + hashes.wheels.length + " 件", entries);
-    wheelHashes.open = hashes.wheels.length <= 8;
-    body.append(wheelHashes);
+    const hashesList = details(label + " " + artifacts.length + " 件", entries);
+    hashesList.open = artifacts.length <= 8;
+    body.append(hashesList);
   }
+}
+
+function rSourcesWithoutHash(report) {
+  if (report.language !== "r" || !report.r.ready) return [];
+  return report.r.nodes.filter(({distribution}) => distribution && !distribution.sha256);
+}
+
+function renderRPinning(report) {
+  const missing = rSourcesWithoutHash(report);
+  $("r-source-pinning").hidden = !missing.length;
+  $("r-pinning-files").replaceChildren(list(missing.map(({distribution}) =>
+    link(distribution.url, distribution.file))));
+}
+
+function generate(report) {
+  report.dockerfileBlockers = dockerfileBlockers(report);
+  const dockerfile = makeDockerfile(report);
+  report.dockerfileHashes = dockerfile ? dockerfileHashes(report) : null;
+  return dockerfile;
 }
 
 function render(report, dockerfile) {
@@ -423,6 +459,7 @@ function render(report, dockerfile) {
   if (report.pythonVersionSource) versionNote.append(" ", link(report.pythonVersionSource, "Python.org の公開版一覧"));
   versionNote.hidden = !report.pythonVersionNote;
   renderDockerfileHashes(report.dockerfileHashes);
+  renderRPinning(report);
   $("docker-preview").hidden = !dockerfile;
   $("docker-preview").open = false;
   $("docker-code").textContent = dockerfile;
@@ -444,12 +481,14 @@ function render(report, dockerfile) {
   $("active").hidden = false;
   const states = new Set(result.nodes.flatMap(({status, conditionStatus}) => [status, conditionStatus]));
   if (states.has("fetch")) setStatus("fetch", "取得失敗あり");
-  else if (states.has("conflict") || base.status === "conflict" || result.cycles.length ||
+  else if (!result.ready && (result.archiveSearch?.limited || result.archiveSearch?.unavailable.length)) {
+    setStatus("pending", "旧版の探索に未確認あり");
+  } else if (states.has("conflict") || base.status === "conflict" || result.cycles.length ||
     apt?.issues.some(({status}) => status === "conflict")) setStatus("conflict", "競合あり");
   else if (states.has("missing") || apt?.issues.some(({status}) => status === "missing")) setStatus("missing", "見つからない項目あり");
   else if (states.has("source")) setStatus("source", "ソースビルドが必要な項目あり");
   else if (states.has("no-wheel")) setStatus("no-wheel", "対応 wheel がない項目あり");
-  else if (language === "python" && result.ready && !dockerfile && !aptError) setStatus("review", "調査完了・Dockerfile 生成不可");
+  else if (result.ready && !dockerfile && !aptError && (language === "python" || rSourcesWithoutHash(report).length)) setStatus("review", "調査完了・Dockerfile 生成不可");
   else if (aptError && language === "python") setStatus("fetch", "索引の取得失敗");
   else if (!result.ready || base.status !== "ok" || apt?.plan?.status === "pending") setStatus("pending", "判定保留あり");
   else if (aptError) setStatus("fetch", "索引の取得失敗");
@@ -463,6 +502,8 @@ function clearResult() {
   $("active").hidden = true;
   $("empty").hidden = false;
   $("docker-code").textContent = "";
+  $("r-archives").value = "";
+  $("r-pin-status").textContent = "";
   results.replaceChildren();
   setStatus("neutral", "未調査");
 }
@@ -582,6 +623,43 @@ reportButton.addEventListener("click", () => {
   if (latest) download("dependency-report.json", "application/json", JSON.stringify(latest.report, null, 2) + "\n");
 });
 
+$("r-archives").addEventListener("change", async (event) => {
+  const investigation = latest;
+  if (!investigation) return;
+  const input = event.currentTarget;
+  const fileList = [...input.files];
+  input.value = "";
+  input.disabled = true;
+  const status = $("r-pin-status");
+  status.textContent = "配布物の SHA-256 を計算中…";
+  const wanted = new Map(rSourcesWithoutHash(investigation.report).map((node) => [node.distribution.file, node]));
+  const messages = [];
+  try {
+    for (const file of fileList) {
+      const node = wanted.get(file.name);
+      if (!node) {
+        messages.push(file.name + " — 照合対象のファイル名と一致しません。");
+        continue;
+      }
+      try {
+        const pinned = await pinRArchive(node, file);
+        if (latest !== investigation) return;
+        node.distribution = pinned;
+        wanted.delete(file.name);
+        messages.push(file.name + " — SHA-256 を記録しました。");
+      } catch (error) {
+        messages.push(file.name + " — " + error.message);
+      }
+    }
+    if (latest !== investigation) return;
+    investigation.dockerfile = generate(investigation.report);
+    render(investigation.report, investigation.dockerfile);
+    status.textContent = messages.join(" ");
+  } finally {
+    input.disabled = false;
+  }
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (submit.disabled) return;
@@ -610,7 +688,12 @@ form.addEventListener("submit", async (event) => {
     const startedAt = new Date().toISOString();
     const target = TARGETS[release];
     const aptPromise = loadAptIndex(release, catalog[release].snapshot).then((index) => ({index}), (error) => ({error: error.message}));
-    const progress = (done, total) => setStatus("neutral", mode.label + " メタデータ " + done + " / " + total);
+    const progress = (done, total, phase) => {
+      const text = phase === "archive" ? "CRAN 旧版の候補を照合中（" + done + " 件）" :
+        phase === "hash" ? "R 配布物の SHA-256 を確認中（" + done + " / " + total + "）" :
+        mode.label + " メタデータ " + done + " / " + total;
+      setStatus("neutral", text);
+    };
     const report = {
       schema: 1, title: "依存メタデータによる調査結果", scope, startedAt, language: id, requestedVersion: version,
       os: target.label, osRelease: release, platform: "linux/arm64", requested, ubuntuRequested,
@@ -624,7 +707,7 @@ form.addEventListener("submit", async (event) => {
       const {index, error} = await aptPromise;
       report.apt = index ? inspectApt(report.r.nodes, ubuntuRequested, index) : null;
       report.aptError = error ?? null;
-      report.sources = {rMetadata: UNIVERSE, cranSourceDistribution: CRAN};
+      report.sources = {rMetadata: UNIVERSE, cranSourceDistribution: CRAN, cranHistoryMirror: CRAN_HISTORY};
     } else {
       const {index, error} = await aptPromise;
       Object.assign(report, await inspectPythonTarget({requested, version, ubuntuRequested, release, index, progress}));
@@ -633,9 +716,7 @@ form.addEventListener("submit", async (event) => {
     }
     report.finishedAt = new Date().toISOString();
     report.notes = revisions(report);
-    report.dockerfileBlockers = dockerfileBlockers(report);
-    const dockerfile = makeDockerfile(report);
-    report.dockerfileHashes = dockerfile ? dockerfileHashes(report) : null;
+    const dockerfile = generate(report);
     render(report, dockerfile);
     latest = { report, dockerfile };
     const heading = $("result-title");

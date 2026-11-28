@@ -1,5 +1,5 @@
 import { inspectApt } from "./apt-resolver.mjs?v=cpython-source-1";
-import { pythonAptPackages, pythonBuildPackages, pythonRuntimeChoice, selectPythonBase } from "./dockerfile.mjs?v=version-labels-1";
+import { pythonAptPackages, pythonBuildPackages, pythonRuntimeChoice, selectPythonBase } from "./dockerfile.mjs?v=cran-archive-1";
 import { inspectPython } from "./python-resolver.mjs?v=dependency-evidence-1";
 import catalog from "./runtime-catalog.mjs?v=cpython-source-1";
 import { TARGETS } from "./targets.mjs?v=cpython-source-1";

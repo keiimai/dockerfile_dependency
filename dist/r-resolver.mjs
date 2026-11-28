@@ -1,7 +1,15 @@
+import { readArchiveDescription, readDescription, sha256Archive } from "./r-artifact.mjs?v=cran-archive-1";
+
 export const PACKAGE_NAME = /^[A-Za-z][A-Za-z0-9.]*$/;
 export const R_VERSION = /^\d+\.\d+\.\d+$/;
 export const CRAN = "https://cloud.r-project.org/src/contrib";
 export const UNIVERSE = "https://cran.r-universe.dev/api/packages/";
+export const CRAN_HISTORY = "https://data.jsdelivr.com/v1/package/gh/cran/";
+const CRAN_DESCRIPTION = "https://cdn.jsdelivr.net/gh/cran/";
+const UNIVERSE_SOURCE = "https://cdn.r-universe.dev/";
+const archiveLimit = 80;
+const stateLimit = 120;
+const download = (url) => fetch(url, {cache: "no-store", signal: AbortSignal.timeout(12000)});
 
 const standard = new Set("base compiler datasets graphics grDevices grid methods parallel splines stats stats4 tcltk tools utils".split(" "));
 const hardRoles = new Set(["Depends", "Imports", "LinkingTo"]);
@@ -38,14 +46,14 @@ function dependency(raw) {
   return { name: raw.package, role: raw.role, operator: condition[1], version: condition[2] };
 }
 
-function readDependencies(data) {
+function readDependencies(data, description = false) {
   if (Array.isArray(data._dependencies)) {
     if (data._dependencies.some((row) => !row || typeof row.role !== "string")) {
       throw new Error("依存フィールドの形式が不明です");
     }
     return data._dependencies.filter((row) => hardRoles.has(row.role)).map(dependency);
   }
-  if (![...hardRoles].some((role) => typeof data[role] === "string")) {
+  if (!description && ![...hardRoles].some((role) => typeof data[role] === "string")) {
     throw new Error("依存フィールドを確認できません");
   }
   return [...hardRoles].flatMap((role) => (data[role] ?? "").split(",").filter((s) => s.trim())
@@ -56,7 +64,7 @@ function readDependencies(data) {
     }));
 }
 
-async function fetchPackage(name, rVersion) {
+async function fetchCurrent(name, rVersion) {
   if (name === "R" || standard.has(name)) {
     return { name, version: rVersion, source: "R 標準", status: "ok", deps: [] };
   }
@@ -64,7 +72,7 @@ async function fetchPackage(name, rVersion) {
   let response;
   let data;
   try {
-    response = await fetch(metadata, { cache: "no-store", signal: AbortSignal.timeout(16000) });
+    response = await download(metadata);
     if (response.status === 404) {
       return { name, metadata, status: "missing", detail: "CRAN 公開版 API で 404。公開直後は反映待ちの場合があります。", deps: [] };
     }
@@ -89,7 +97,13 @@ async function fetchPackage(name, rVersion) {
     result.publication = typeof data["Date/Publication"] === "string" ? data["Date/Publication"] : null;
     const file = name + "_" + data.Version + ".tar.gz";
     if (data._file !== file) throw new Error("メタデータ上の配布物名が版と一致しません");
-    result.distribution = { file, current: CRAN + "/" + file, archive: CRAN + "/Archive/" + name + "/" + file };
+    const current = CRAN + "/" + file;
+    const archive = CRAN + "/Archive/" + name + "/" + file;
+    const sha256 = /^[a-f0-9]{64}$/.test(data._sha256 ?? "") ? data._sha256 : null;
+    result.distribution = {
+      file, current, archive, url: sha256 ? UNIVERSE_SOURCE + sha256 : current,
+      repository: sha256 ? "r-universe" : "cran", sha256,
+    };
     if (/^windows$/i.test(data.OS_type ?? "")) {
       result.status = "conflict";
       result.detail = "公開候補の OS_type が Windows 専用です。";
@@ -99,6 +113,64 @@ async function fetchPackage(name, rVersion) {
     return result;
   } catch (error) {
     return { ...result, detail: error.message };
+  }
+}
+
+async function archiveVersions(name) {
+  const response = await download(CRAN_HISTORY + encodeURIComponent(name));
+  if (response.status === 404) return [];
+  if (!response.ok) throw new Error("HTTP " + response.status);
+  const data = await response.json();
+  if (!Array.isArray(data.versions)) throw new Error("CRAN 旧版一覧の形式を確認できません。");
+  return [...new Set(data.versions.filter((version) => typeof version === "string" && versionPattern.test(version)))]
+    .sort((a, b) => compareR(b, a));
+}
+
+async function fetchArchived(name, version) {
+  const metadata = CRAN_DESCRIPTION + name + "@" + version + "/DESCRIPTION";
+  const response = await download(metadata);
+  if (!response.ok) throw new Error("DESCRIPTION " + version + " — HTTP " + response.status);
+  const data = readDescription(await response.text());
+  if (data.Package !== name || data.Version !== version) {
+    throw new Error("旧版の DESCRIPTION とパッケージ名・版が一致しません。");
+  }
+  const file = name + "_" + version + ".tar.gz";
+  const url = CRAN + "/Archive/" + name + "/" + file;
+  const windows = /^windows$/i.test(data.OS_type ?? "");
+  return {
+    name, version, metadata, status: windows ? "conflict" : "ok",
+    detail: windows ? "この旧版の OS_type が Windows 専用です。" : undefined,
+    deps: readDependencies(data, true), system: data.SystemRequirements ?? "",
+    sysreqHint: data["Config/pak/sysreqs"] ?? "", publication: data["Date/Publication"] ?? null,
+    distribution: {file, archive: url, url, repository: "archive", sha256: null},
+  };
+}
+
+function dependencyKeys(deps) {
+  return [...new Set(deps.map(({role, name, operator, version}) =>
+    [role, name, operator, version].join(" ")))].sort().join("\n");
+}
+
+export async function pinRArchive(node, file) {
+  const {name, version, distribution} = node;
+  if (distribution.sha256) return distribution;
+  const description = await readArchiveDescription(file, name);
+  const system = (value) => (value ?? "").replace(/\s+/g, " ").trim();
+  if (description.Package !== name || description.Version !== version ||
+      dependencyKeys(readDependencies(description, true)) !== dependencyKeys(node.deps) ||
+      system(description.SystemRequirements) !== system(node.system) ||
+      /^windows$/i.test(description.OS_type ?? "")) {
+    throw new Error("配布物の名前・版・依存条件が、調査した DESCRIPTION と一致しません。");
+  }
+  return {...distribution, sha256: await sha256Archive(file)};
+}
+
+async function pinPublicArchive(node) {
+  try {
+    const response = await fetch(node.distribution.url, {signal: AbortSignal.timeout(5000)});
+    if (response.ok) node.distribution = await pinRArchive(node, await response.blob());
+  } catch {
+    // The selected bytes can also be checked locally from a browser-selected file.
   }
 }
 
@@ -144,14 +216,14 @@ function installationOrder(nodes, roots) {
   return { ordered, cycles: [...cycles] };
 }
 
-export async function inspectR(roots, rVersion, progress) {
+async function resolveGraph(roots, getCandidate, progress) {
   const nodes = new Map();
   const queued = new Set(roots);
   const queue = [...roots];
   for (let i = 0; i < queue.length;) {
     const batch = queue.slice(i, i + 8);
     i += batch.length;
-    const results = await Promise.all(batch.map((name) => fetchPackage(name, rVersion)));
+    const results = await Promise.all(batch.map(getCandidate));
     for (const node of results) {
       nodes.set(node.name, { ...node, incoming: [] });
       for (const dep of node.deps) {
@@ -182,10 +254,120 @@ export async function inspectR(roots, rVersion, progress) {
       node.conditionDetail = "指定の R 版または同梱の標準パッケージが版条件を満たしません。";
     } else if (node.incoming.some(({status}) => status === "pending") && node.version) {
       node.conditionStatus = "pending";
-      node.conditionDetail = "確認できた公開候補版が条件を満たしません。旧版の調査が必要です。";
+      node.conditionDetail = "調査した候補版が依存元の版条件を満たしません。";
     }
   }
   const { ordered, cycles } = installationOrder(nodes, roots);
   const ready = !cycles.length && [...nodes.values()].every((node) => node.status === "ok" && !node.conditionStatus);
-  return { nodes: [...nodes.values()], order: ordered, cycles, ready };
+  return { nodes, order: ordered, cycles, ready };
+}
+
+function satisfiesR(version, {operator, version: required}) {
+  return !operator || matches(compareR(version, required), operator);
+}
+
+function causesOfFailure({nodes, cycles}) {
+  const failures = [...nodes.values()].filter((node) =>
+    node.conditionStatus || node.status === "missing" || node.status === "conflict").map(({name}) => name);
+  const causes = [...new Set([...failures, ...cycles])];
+  const seen = new Set(causes);
+  // A different version of a parent can change its child's constraints.
+  for (let i = 0; i < causes.length; i++) {
+    const node = nodes.get(causes[i]);
+    for (const {parent, status} of node.incoming) {
+      if (seen.has(parent) || (node.source && status === "ok")) continue;
+      seen.add(parent);
+      causes.push(parent);
+    }
+  }
+  return causes.map((name) => nodes.get(name)).filter((node) => !node.source);
+}
+
+export async function inspectR(roots, rVersion, progress = () => {}) {
+  const current = new Map();
+  const archiveLists = new Map();
+  const archiveCandidates = new Map();
+  const visited = new Set();
+  const unavailable = new Map();
+  let limited = false;
+
+  function getCurrent(name) {
+    if (!current.has(name)) current.set(name, fetchCurrent(name, rVersion));
+    return current.get(name);
+  }
+
+  async function* alternatives(node) {
+    const {name, incoming} = node;
+    const fits = (version) => incoming.every((dep) => dep.parent === name || satisfiesR(version, dep));
+    const live = await getCurrent(name);
+    if (live.status === "ok" && live.version !== node.version && fits(live.version)) yield live;
+    progress(archiveCandidates.size, null, "archive");
+    if (!archiveLists.has(name)) archiveLists.set(name, archiveVersions(name).catch((error) => {
+      unavailable.set(name, error.message);
+      return [];
+    }));
+    for (const version of await archiveLists.get(name)) {
+      if (version === node.version || (live.version && compareR(version, live.version) >= 0) || !fits(version)) continue;
+      const key = name + "@" + version;
+      if (!archiveCandidates.has(key)) {
+        if (archiveCandidates.size >= archiveLimit) {
+          limited = true;
+          return;
+        }
+        progress(archiveCandidates.size + 1, null, "archive");
+        archiveCandidates.set(key, fetchArchived(name, version).catch((error) => {
+          unavailable.set(key, error.message);
+          return null;
+        }));
+      }
+      const candidate = await archiveCandidates.get(key);
+      if (candidate?.status === "ok") yield candidate;
+    }
+  }
+
+  let initial;
+  async function search(overrides) {
+    if (visited.size >= stateLimit || limited) {
+      limited = true;
+      return null;
+    }
+    const graph = await resolveGraph(roots, (name) => overrides.get(name) ?? getCurrent(name), progress);
+    if (!initial) initial = graph;
+    if (graph.ready) return graph;
+    const key = [...graph.nodes.values()].filter((node) => node.distribution?.repository === "archive")
+      .map(({name, version}) => name + "@" + version).sort().join(",");
+    if (visited.has(key)) return null;
+    visited.add(key);
+    const reachable = [...overrides].filter(([name]) => graph.nodes.has(name));
+    for (const node of causesOfFailure(graph)) {
+      for await (const candidate of alternatives(node)) {
+        const rCompatible = candidate.deps.every((dep) => {
+          return (dep.name !== "R" && !standard.has(dep.name)) || satisfiesR(rVersion, dep);
+        });
+        if (!rCompatible) continue;
+        const next = new Map(reachable);
+        if (candidate.distribution.repository === "archive") next.set(node.name, candidate);
+        else next.delete(node.name);
+        const result = await search(next);
+        if (result || limited) return result;
+      }
+      if (limited) break;
+    }
+    return null;
+  }
+
+  const selected = await search(new Map()) ?? initial;
+  const nodes = [...selected.nodes.values()];
+  if (selected.ready) {
+    const toPin = nodes.filter((node) => node.distribution && !node.distribution.sha256);
+    for (let i = 0; i < toPin.length; i += 4) {
+      progress(i, toPin.length, "hash");
+      await Promise.all(toPin.slice(i, i + 4).map(pinPublicArchive));
+    }
+  }
+  const archiveSearch = {
+    packages: archiveLists.size, candidates: archiveCandidates.size, limited,
+    unavailable: [...unavailable].map(([name, reason]) => ({name, reason})),
+  };
+  return { ...selected, nodes, archiveSearch };
 }

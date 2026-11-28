@@ -84,7 +84,17 @@ export function dockerfileBlockers({language, base, r, python, apt, ubuntuReques
     reasons.push(...(issues?.length ? issues : [apt.plan.text ?? "Ubuntu の必須要件を確定できません。"]));
   }
   if (wrongAptRelease(base, apt)) reasons.push("Ubuntu の対象リリースと APT 索引が一致しません。");
-  if (!isPython || base.status !== "ok" || (apt?.plan && apt.plan.status !== "ok")) return reasons;
+  if (!isPython) {
+    const unpinned = (r.nodes ?? []).filter(({distribution}) =>
+      distribution && !/^[a-f0-9]{64}$/.test(distribution.sha256 ?? ""));
+    if (r.ready && unpinned.length) {
+      const names = unpinned.slice(0, 3).map(({name, version}) => name + " " + version);
+      const more = unpinned.length > 3 ? " ほか " + (unpinned.length - 3) + " 件" : "";
+      reasons.push("配布物の SHA-256 が未確認です — " + names.join("、") + more + "。下の欄で照合できます。");
+    }
+    return reasons;
+  }
+  if (base.status !== "ok" || (apt?.plan && apt.plan.status !== "ok")) return reasons;
 
   const pinned = new Set(apt?.pins?.map(({name}) => name));
   const source = base.runtimeMethod === "source";
@@ -130,24 +140,30 @@ export function makeDockerfile(report) {
   const nodes = new Map(r.nodes.map((node) => [node.name, node]));
   lines.push(
     "",
-    "# 版付きの CRAN ソースを依存順に導入。移動済みなら同じ版を CRAN Archive から取得。",
-    "# 配布物の DESCRIPTION を、導入直前に名前・版・依存フィールドと照合します。",
+    "# SHA-256 で固定した R ソースを依存順に導入します。",
+    "# 配布物を SHA-256 と DESCRIPTION の名前・版・依存フィールドで照合します。",
     "ENV R_LIBS=/opt/demo-r-library",
     "RUN <<'SH'",
     "set -eu",
     'mkdir -p "$R_LIBS"',
     "work=$(mktemp -d)",
     'trap \'rm -rf "$work"\' EXIT',
+    "download_r_source() {",
+    "  Rscript --vanilla -e 'a <- commandArgs(TRUE); stopifnot(download.file(a[1], a[2], method = \"libcurl\", mode = \"wb\", quiet = TRUE) == 0L)' \"$1\" \"$2\"",
+    "}",
     "install_cran() {",
     "  name=$1",
     "  version=$2",
-    "  current=$3",
-    "  archive=$4",
-    "  expected=$5",
+    "  url=$3",
+    "  fallback=$4",
+    "  sha256=$5",
+    "  expected=$6",
     '  tarball="$work/$name.tar.gz"',
-    '  if ! curl -fsSL --retry 2 "$current" -o "$tarball"; then',
-    '    curl -fsSL --retry 2 "$archive" -o "$tarball"',
+    '  if ! download_r_source "$url" "$tarball"; then',
+    '    test -n "$fallback"',
+    '    download_r_source "$fallback" "$tarball"',
     "  fi",
+    '  printf "%s  %s\\n" "$sha256" "$tarball" | sha256sum -c -',
     '  tar -xOzf "$tarball" "$name/DESCRIPTION" > "$work/DESCRIPTION"',
     "  Rscript --vanilla -e '",
     "    a <- commandArgs(TRUE)",
@@ -167,10 +183,11 @@ export function makeDockerfile(report) {
   );
   for (const name of r.order) {
     const node = nodes.get(name);
-    const { current, archive } = node.distribution;
+    const {url, archive, sha256, repository} = node.distribution;
+    const fallback = repository === "cran" ? archive : "";
     const requirements = node.deps.map(({role, name, operator, version}) =>
       role + ":" + name + (operator ? "(" + operator + version + ")" : "")).join("|");
-    const args = [name, node.version, current, archive, requirements].map((value) => "'" + value + "'");
+    const args = [name, node.version, url, fallback, sha256, requirements].map((value) => "'" + value + "'");
     lines.push("install_cran " + args.join(" "));
   }
   lines.push("SH", "");
@@ -265,12 +282,14 @@ function pythonWheelArtifacts(python) {
   }));
 }
 
-export function dockerfileHashes({base, language, python}) {
+export function dockerfileHashes({base, language, python, r}) {
   const [reference, digest] = base.image.split("@");
   return {
     baseImage: {reference, digest},
     pythonSource: language === "python" ? base.pythonSource ?? null : null,
     wheels: language === "python" ? pythonWheelArtifacts(python) : [],
+    rSources: (r?.nodes ?? []).filter(({distribution}) => distribution?.sha256)
+      .map(({name, version, distribution: {url, sha256}}) => ({name, version, url, sha256})),
   };
 }
 
