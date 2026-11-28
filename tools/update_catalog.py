@@ -260,6 +260,29 @@ def refresh_ubuntu(release, target, snapshot, staging, force):
     return candidate, path
 
 
+def backfill_ubuntu_signatures():
+    work = ROOT / "_tmp"
+    work.mkdir(exist_ok=True)
+    for release in UBUNTU_RELEASES:
+        path = ROOT / f"dist/data/ubuntu-{release}-arm64.json.gz"
+        with gzip.open(path, "rt") as stream:
+            saved = json.load(stream)
+        if all(s.get("signature") for s in saved["sources"] if s["kind"] == "Release"):
+            continue
+        with tempfile.TemporaryDirectory(dir=work) as temp:
+            scratch = Path(temp)
+            sources = snapshot_sources(saved["snapshot"], scratch, release)
+            def sums(rows):
+                return {s["url"]: s["sha256"] for s in rows}
+            if sums(sources) != sums(saved["sources"]):
+                raise ValueError(f"Signed Release disagrees with the published {release} snapshot")
+            saved["sources"] = sources
+            candidate = scratch / path.name
+            with gzip.open(candidate, "wt", encoding="utf-8", compresslevel=8) as stream:
+                json.dump(saved, stream, ensure_ascii=False, separators=(",", ":"))
+            candidate.replace(path)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hash-provenance", action="store_true", help="Backfill evidence for cataloged CPython archives")
@@ -276,6 +299,7 @@ def main(argv=None):
     if args.hash_provenance:
         catalog["pythonSeries"] = {k:v for k,v in catalog["pythonSeries"].items() if version_key(k) >= (3, 10)}
         refresh_python_sources(list(catalog["pythonSources"]), catalog["pythonSeries"], catalog)
+        backfill_ubuntu_signatures()
         CATALOG.write_text(PREFIX + json.dumps(catalog, indent=2, sort_keys=True) + SUFFIX)
         return
     before = json.dumps(catalog, sort_keys=True)

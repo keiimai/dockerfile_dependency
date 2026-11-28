@@ -250,7 +250,11 @@ export function selectPythonBase(requestedVersion, index, release = "noble", apt
     evidence: "https://hub.docker.com/_/ubuntu", requestedVersion, runtimeMethod: runtime.method,
   };
   if (runtime.method === "source" && !runtime.source) {
-    return {...base, status: "pending", detail: "CPython " + runtime.version + " の公式ソースの SHA-256 を確認できません。"};
+    const series = runtime.version.split(".").slice(0, 2).join(".");
+    const detail = !catalog.pythonSeries[series] ? "この系列は Python.org の公開版カタログに未収録です。" :
+      !Object.hasOwn(catalog.pythonSources, runtime.version) ? "指定したパッチ版は当サイトの公開版カタログに未収録です。" :
+      "公開版の配布物に利用できる固定値がありません。";
+    return {...base, status: "pending", detail: detail + " CPython " + runtime.version + " の公式ソースの SHA-256 を確認できません。"};
   }
   if (!index) {
     return {...base, status: "pending", detail: "Ubuntu の公式 APT 索引を取得できないため、Python の実行環境を固定できません。"};

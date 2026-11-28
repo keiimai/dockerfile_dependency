@@ -31,7 +31,11 @@ try {
   const ws = new WebSocket(tabs.find(t=>t.type==="page").webSocketDebuggerUrl);
   await new Promise(ok=>ws.addEventListener("open",ok,{once:true}));
   let seq = 0; const pending = new Map();
-  ws.onmessage = event => { const m=JSON.parse(event.data); if (pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
+  ws.onmessage = event => {
+    const m = JSON.parse(event.data);
+    if (m.method === "Runtime.exceptionThrown") console.error(m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text);
+    if (pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+  };
   const call=async (method,params={})=>{
     const id=++seq; const wait=new Promise(ok=>pending.set(id,ok)); ws.send(JSON.stringify({id,method,params}));
     const m=await wait; if (m.error) throw Error(m.error.message); return m.result;
@@ -41,35 +45,88 @@ try {
     if (result.exceptionDetails) throw Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
     return result.result.value;
   };
-  await call("Page.addScriptToEvaluateOnNewDocument",{source:`
-    window.counts={r:0,apt:0}; const nativeFetch=window.fetch.bind(window);
-    window.fetch=async(u,options)=>{
-      if (String(u).includes("ubuntu-noble-arm64.json.gz") && ++counts.apt === 1) {
-        return new Promise((_,reject)=>options.signal.addEventListener("abort",()=>reject(options.signal.reason),{once:true}));
-      }
-      if (String(u).includes("cran.r-universe.dev/api/packages/")) {
-        counts.r++;return Response.json({Package:"Demo",Version:"1.0",_type:"src",_file:"Demo_1.0.tar.gz",
-          _sha256:"b".repeat(64),_dependencies:[],SystemRequirements:"GDAL"});
-      }
-      return nativeFetch(u,options);
-    };
-    window.el=(id)=>document.getElementById(id);
-    window.enter=(id,val)=>{el(id).value=val;el(id).dispatchEvent(new Event('input',{bubbles:true}));};
-    window.choose=(id,val)=>{el(id).value=val;el(id).dispatchEvent(new Event('change',{bubbles:true}));};`});
-  await call("Page.navigate",{url:"http://127.0.0.1:"+server.address().port});
-  await until(()=>evaluate("el('r-version')?.options.length > 1"));
-  await evaluate("choose('r-version','custom'); enter('custom-version','4.5.0');enter('packages','Demo');el('submit').click()");
-  await until(()=>evaluate("el('input-error').textContent.includes('4.5.1')"));
-  await evaluate("choose('language','python'); choose('r-version','custom'); enter('custom-version','3.9');enter('packages','Demo');el('submit').click()");
-  assert(await evaluate("el('input-error').textContent.includes('3.10')"));
-  await evaluate("choose('language','r');choose('r-version','4.6.1');enter('packages','Demo');el('submit').click()");
-  await until(()=>evaluate("!el('active').hidden && el('verification-scope').textContent.includes('1 件')"));
-  assert(await evaluate("!el('packages').disabled && el('download-dockerfile').disabled && counts.r===1"));
-  await until(()=>evaluate("!el('apt-retry').hidden"));
-  assert(await evaluate("el('results').textContent.includes('タイムアウト') && el('download-dockerfile').disabled"));
-  await evaluate("el('apt-retry').click()");
-  await until(()=>evaluate("!el('download-dockerfile').disabled"));
-  assert(await evaluate("counts.r===1 && counts.apt===2 && el('docker-code').textContent.includes('libgdal-dev=')"));
+  await call("Page.enable");
+  await call("Runtime.enable");
+  if (process.env.PAGES_URL) {
+    const downloads = resolve("_tmp/production-downloads");
+    await mkdir(downloads, {recursive:true});
+    await call("Browser.setDownloadBehavior", {behavior:"allow", downloadPath:downloads});
+    await call("Page.navigate", {url:new URL("dist/", process.env.PAGES_URL).href});
+    await until(() => evaluate("document.querySelector('#r-version')?.options.length > 1"));
+    const enter = async (language, names) => evaluate(`(() => {
+      const el = id => document.getElementById(id);
+      el("language").value = ${JSON.stringify(language)};
+      el("language").dispatchEvent(new Event("change", {bubbles:true}));
+      el("packages").value = ${JSON.stringify(names)};
+      el("packages").dispatchEvent(new Event("input", {bubbles:true}));
+      el("submit").click();
+    })()`);
+    const ready = () => until(() => evaluate("!document.getElementById('download-dockerfile').disabled"), 50000);
+    await enter("r", "rbugs");
+    await ready();
+    await evaluate("document.getElementById('download-report').click()");
+    const report = await until(async () => JSON.parse(await readFile(downloads + "/dependency-report.json","utf8")));
+    const archive = report.r.nodes.find(n => n.name === "rbugs").distribution;
+    assert.equal(archive.hashEvidence.reusedVia, "catalog");
+    assert.equal(archive.hashEvidence.method, "cran-archive-catalog");
+    await evaluate("document.getElementById('download-dockerfile').click()");
+    assert((await until(() => readFile(downloads + "/Dockerfile","utf8"))).includes(archive.sha256));
+    await enter("python", "idna");
+    await ready();
+    assert(await evaluate("document.getElementById('docker-code').textContent.includes('--hash=sha256:')"));
+    console.log("Published Pages: CRAN Archive, PyPI, bundled archive evidence and both download files verified.");
+  } else {
+    await call("Page.navigate",{url:"http://127.0.0.1:"+server.address().port});
+    await until(()=>evaluate("document.querySelector('#r-version')?.options.length > 1"));
+    await evaluate(`
+      window.counts={r:0,apt:0,py:0,metadata:0,otherApt:0}; const nativeFetch=window.fetch.bind(window);
+      window.fetch=async(u,options)=>{
+        if (String(u).includes("ubuntu-noble-arm64.json.gz") && ++counts.apt === 1) {
+          return new Promise((_,reject)=>options.signal.addEventListener("abort",()=>reject(options.signal.reason),{once:true}));
+        }
+        if (String(u).includes("ubuntu-resolute-arm64.json.gz") && ++counts.otherApt === 1) {
+          await new Promise(ok => window.failOtherIndex=ok); return new Response("",{status:503});
+        }
+        const file="demo-1.0-py3-none-any.whl", url="https://files.pythonhosted.org/packages/ab/"+file;
+        if (String(u)==="https://pypi.org/simple/demo/") {
+          counts.py++;
+          return Response.json({name:"demo",files:[{filename:file,url,yanked:false,
+            hashes:{sha256:"a".repeat(64)},"requires-python":">=3.10","core-metadata":true}]});
+        }
+        if (String(u)===url+".metadata") {
+          counts.metadata++; return new Response(["Metadata-Version: 2.3","Name: demo","Version: 1.0","Requires-Python: >=3.10","",""].join("\\n"));
+        }
+        if (String(u).includes("cran.r-universe.dev/api/packages/")) {
+          counts.r++;return Response.json({Package:"Demo",Version:"1.0",_type:"src",_file:"Demo_1.0.tar.gz",
+            _sha256:"b".repeat(64),_dependencies:[],SystemRequirements:"GDAL"});
+        }
+        return nativeFetch(u,options);
+      };
+      window.el=(id)=>document.getElementById(id);
+      window.enter=(id,val)=>{el(id).value=val;el(id).dispatchEvent(new Event('input',{bubbles:true}));};
+      window.choose=(id,val)=>{el(id).value=val;el(id).dispatchEvent(new Event('change',{bubbles:true}));};
+      true`);
+    await evaluate("choose('r-version','custom'); enter('custom-version','4.5.0');enter('packages','Demo');el('submit').click()");
+    await until(()=>evaluate("el('input-error').textContent.includes('4.5.1')"));
+    await evaluate("choose('language','python'); choose('r-version','custom'); enter('custom-version','3.9');enter('packages','Demo');el('submit').click()");
+    assert(await evaluate("el('input-error').textContent.includes('3.10')"));
+    await evaluate("choose('language','r');choose('r-version','4.6.1');enter('packages','Demo');el('submit').click()");
+    await until(()=>evaluate("!el('active').hidden && el('verification-scope').textContent.includes('1 件')"));
+    assert(await evaluate("!el('packages').disabled && el('download-dockerfile').disabled && counts.r===1"));
+    await until(()=>evaluate("!el('apt-retry').hidden"));
+    assert(await evaluate("el('results').textContent.includes('タイムアウト') && el('download-dockerfile').disabled"));
+    await evaluate("el('apt-retry').click()");
+    await until(()=>evaluate("!el('download-dockerfile').disabled"));
+    assert(await evaluate("counts.r===1 && counts.apt===2 && el('docker-code').textContent.includes('libgdal-dev=')"));
+    await evaluate("choose('target-os','resolute');choose('language','python');choose('r-version','3.14');enter('packages','demo');el('submit').click()");
+    await until(()=>evaluate("counts.py===1 && counts.metadata===1 && !el('active').hidden && el('verification-scope').textContent.includes('Python wheel')"));
+    assert(await evaluate("el('download-dockerfile').disabled && el('run-status').textContent.includes('Ubuntu 索引')"));
+    await evaluate("window.failOtherIndex()");
+    await until(()=>evaluate("!el('apt-retry').hidden"));
+    await evaluate("el('apt-retry').click()");
+    await until(()=>evaluate("!el('download-dockerfile').disabled"));
+    assert(await evaluate("counts.py===1 && counts.metadata===1 && counts.otherApt===2 && el('docker-code').textContent.includes('demo-1.0-py3-none-any.whl')"));
+    console.log("Chromium: supported versions, partial report, timeout, isolated APT retry and recovered Dockerfile verified.");
+  }
   ws.close();
-  console.log("Chromium: supported versions, partial report, timeout, isolated APT retry and recovered Dockerfile verified.");
 } finally { browser.kill(); server.close(); }

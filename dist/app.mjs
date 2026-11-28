@@ -43,6 +43,7 @@ const draftKey = () => release + "/" + selectedLanguage;
 let selectedLanguage = language.value;
 let latest;
 let generation = 0;
+let presentationRevision = 0;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -424,16 +425,18 @@ function renderRPinning(report) {
     link(distribution.url, distribution.file))));
 }
 
-async function generate(report) {
+function generate(report) {
   report.dockerfileBlockers = dockerfileBlockers(report);
   if (report.aptLoading) report.dockerfileBlockers = ["Ubuntu 索引を照合中です。"];
   const dockerfile = report.aptLoading ? "" : makeDockerfile(report);
-  report.buildEvidence = await buildEvidence(report, dockerfile);
   const sources = report[report.language].nodes.filter((node) => node.distribution);
   report.hashCoverage = {identified: sources.length, pinned: sources.filter((n) => n.distribution.sha256).length,
     downloaded: sources.filter((n) => ["downloaded-artifact", "local-file", "cran-archive-catalog"].includes(n.distribution.hashEvidence?.method)).length};
-  report.baseHashEvidence = report.base.image ? {reference:report.base.image, source:report.base.evidence,
-    method:"catalog-image-digest", catalogSnapshot:report.catalogSnapshot} : null;
+  const digest = report.base.image?.split("@")[1];
+  const imageRepository = report.language === "r" ? "rocker/rstudio" : "library/ubuntu";
+  report.baseHashEvidence = digest ? {reference:report.base.image,
+    source:"https://registry-1.docker.io/v2/" + imageRepository + "/manifests/" + digest,
+    method:"catalog-image-digest", catalogReadAt:report.startedAt} : null;
   report.dockerfileHashes = dockerfile ? dockerfileHashes(report) : null;
   return dockerfile;
 }
@@ -452,7 +455,7 @@ function render(report, dockerfile) {
   const baseRow = element("p");
   baseRow.append(element("strong", "ベースイメージ"), " ", element("code", base.image ?? base.candidate), " ",
     badge(base.status), " ", base.detail, " ", link(base.evidence, language === "r" ? "Rocker のタグ" : "Ubuntu イメージ"));
-  const time = element("p", new Date(finishedAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) + " JST");
+  const time = element("p", new Date(finishedAt ?? report.updatedAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) + " JST");
   meta.replaceChildren(conditions, rInput, baseRow, time);
   const stat = (value, name) => {
     const block = element("div");
@@ -483,6 +486,19 @@ function render(report, dockerfile) {
   if (record?.source) build.append(" ", link(record.source, "GitHub Actions の実行記録"));
   checks.replaceChildren(element("p", kind + "の SHA-256 は特定した配布物 " + coverage.identified + " 件中 " +
     coverage.pinned + " 件で確認。配布物の実ファイルから計算した値は " + coverage.downloaded + " 件です。"), build);
+  if (language === "python") {
+    const runtime = pythonRuntimeChoice(requestedVersion, report.osRelease);
+    report.runtimeHash = runtime.source ?? null;
+    const method = runtime.source?.hashEvidence?.method;
+    const methods = {"python-release-sha256":"Python.org のリリースページ掲載値", "sigstore-declared-digest":"公式 Sigstore バンドルの記載値",
+      "artifact-sha256-after-md5":"公式 MD5 と照合した配布物から計算", "previous-catalog":"既存カタログの値"};
+    checks.append(element("p", runtime.source ? "CPython 本体の SHA-256 は" + methods[method] + "です。" :
+      runtime.method === "apt" ? "CPython 本体は Ubuntu の署名付き APT リポジトリから導入します。" :
+      "CPython 本体の SHA-256 は未収録です。"));
+  }
+  if (apt?.snapshot.sources.some((source) => source.signature)) {
+    checks.append(element("p", "Ubuntu 索引は、公式鍵で検証した Release の SHA-256 と照合済みです。"));
+  }
   $("apt-retry").hidden = !aptError || Boolean(report.aptLoading);
   renderRPinning(report);
   $("docker-preview").hidden = !dockerfile;
@@ -492,7 +508,9 @@ function render(report, dockerfile) {
   reportButton.disabled = false;
   const openApt = apt?.evidence.some((row) => row.status === "review");
   const exportNote = $("export-note");
-  if (!dockerfile) {
+  if (report.aptLoading) {
+    exportNote.textContent = "Ubuntu 索引の照合が終わると、Dockerfile の生成可否を表示します。";
+  } else if (!dockerfile) {
     exportNote.replaceChildren(element("strong", "Dockerfile を生成できません。"), list(report.dockerfileBlockers));
   } else {
     exportNote.textContent = openApt ? "Ubuntu の要件に用途や提供元を確認できない項目があります。"
@@ -582,6 +600,7 @@ function updateLanguageFields(versionValue) {
   const version = python?.defaultVersion ?? versions.at(-1);
   $("environment-os").textContent = TARGETS[release].label;
   $("version-label").textContent = mode.label + " のバージョン";
+  $("custom-version-label").textContent = "バージョンを入力（" + minimumVersions[selectedLanguage] + " 以降）";
   $("packages-label").textContent = mode.label + " パッケージ名";
   customVersion.pattern = mode.version.source.slice(1, -1);
   customVersion.placeholder = version ? "例  " + (python ? catalog[release].python : version) : "メジャー.マイナー.パッチ";
@@ -694,10 +713,14 @@ const requestIndex = (os) => loadAptIndex(os, catalog[os].snapshot)
 
 async function present(report, id) {
   if (id !== generation) return;
-  report.finishedAt = new Date().toISOString();
+  const revision = ++presentationRevision;
+  report.updatedAt = new Date().toISOString();
+  report.finishedAt = report.aptLoading ? null : report.updatedAt;
   report.notes = revisions(report);
-  const dockerfile = await generate(report);
-  if (id !== generation) return;
+  const dockerfile = generate(report);
+  const evidence = await buildEvidence(report, dockerfile);
+  if (id !== generation || revision !== presentationRevision) return;
+  report.buildEvidence = evidence;
   render(report, dockerfile);
   latest = {report, dockerfile, generation:id};
 }

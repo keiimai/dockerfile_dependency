@@ -92,6 +92,11 @@ test("tries old R releases and resolves a shared indirect dependency across root
 test("checks an archived DESCRIPTION and hashes the original gzipped artifact", async (t) => {
   const description = "Package: Sample\nVersion: 1.2\nDepends:\n    R (>= 4.4)\nSystemRequirements: GDAL\n";
   const tarball = sourceTar("Sample", description);
+  const saved = new Map();
+  Object.defineProperty(globalThis, "localStorage", {configurable:true, value:{
+    getItem:(key) => saved.get(key) ?? null, setItem:(key,value) => saved.set(key,value),
+  }});
+  t.after(() => { delete globalThis.localStorage; });
   replaceFetch(t, {Sample: current("Sample", "2.0", [{role: "Depends", package: "R", version: ">= 4.6"}])},
     {Sample: ["2.0", "1.3", "1.2"]}, {
       "Sample@1.3": "Package: Sample\nVersion: 1.3\nDepends: R (>= 4.6)\n",
@@ -114,6 +119,10 @@ test("checks an archived DESCRIPTION and hashes the original gzipped artifact", 
   const index = parseAptIndex(JSON.parse(gunzipSync(readFileSync(new URL("../dist/data/ubuntu-noble-arm64.json.gz", import.meta.url)))));
   const apt = inspectApt(r.nodes, [], index);
   assert.equal(node.distribution.hashEvidence.method, "local-file");
+  const again = await inspectR(["Sample"], "4.5.3");
+  assert.equal(again.nodes[0].distribution.sha256, expected);
+  assert.equal(again.nodes[0].distribution.hashEvidence.reusedVia, "browser-cache");
+  assert.equal(again.nodes[0].distribution.hashEvidence.checkedAt, node.distribution.hashEvidence.checkedAt);
   assert(makeDockerfile({...report(r), apt}).includes("install_cran 'Sample' '1.2' '" + url + "' '' '" + expected + "'"));
   assert.deepEqual(dockerfileHashes(report(r)).rSources, [{name: "Sample", version: "1.2", url, sha256: expected}]);
 });

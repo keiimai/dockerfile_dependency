@@ -105,6 +105,8 @@ jobs:
       - run: node tools/check_browser.mjs
 
   deploy:
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     needs: [prepare, browser]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
@@ -120,3 +122,19 @@ jobs:
       - name: Deploy static site
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+  public-site:
+    needs: [prepare, deploy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.prepare.outputs.verified_ref }}
+          persist-credentials: false
+      - name: Verify published downloads against live repositories
+        env:
+          PAGES_URL: ${{ needs.deploy.outputs.page_url }}
+        run: node tools/check_browser.mjs

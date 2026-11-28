@@ -56,7 +56,8 @@ def release_indexes(base, suite, scratch):
         checksums[path] = digest
 
     sources = [{"kind": "Release", "suite": suite, "url": url, "date": date, "sha256": release_hash,
-                "signature": {"url": url + ".gpg", "sha256": signature_hash, "signers": signers}}]
+                "signature": {"url": url + ".gpg", "sha256": signature_hash, "signers": signers,
+                              "checkedAt": datetime.now(timezone.utc).isoformat(timespec="seconds")}}]
     paths = [("Packages", f"{component}/binary-arm64/Packages.xz") for component in COMPONENTS]
     paths.append(("Contents", "Contents-arm64.gz"))
     for kind, path in paths:

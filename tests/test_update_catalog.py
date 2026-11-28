@@ -32,7 +32,11 @@ class CatalogTests(unittest.TestCase):
         page = f'<tr><td><a href="{url}">Gzipped source</a></td><td><code class="checksum">' \
                f'<span>{digest[:32]}</span><wbr><span>{digest[32:]}</span></code></td></tr>'
         with patch.object(updater, "fetch", return_value=page.encode()):
-            self.assertEqual(updater.python_source_record("3.13.10", latest=True)[0], digest)
+            value, evidence = updater.python_source_record("3.13.10", latest=True)
+            self.assertEqual(value, digest)
+            self.assertEqual(evidence["method"], "python-release-sha256")
+            self.assertIn("31310", evidence["source"])
+            self.assertTrue(evidence["checkedAt"])
 
     def test_checks_an_archived_source_against_its_published_checksum(self):
         url = "https://www.python.org/ftp/python/3.10.0/Python-3.10.0.tgz"
