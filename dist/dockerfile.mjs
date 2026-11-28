@@ -238,7 +238,7 @@ export function selectPythonBase(requestedVersion, index, release = "noble", apt
   if (runtime.method === "source") {
     return {
       ...base, status: "ok", pythonVersion: runtime.version, pythonSource: runtime.source,
-      detail: "固定 Ubuntu イメージに CPython " + runtime.version + " を Python.org の公式ソースからビルドします。",
+      detail: "Dockerfile で CPython " + runtime.version + " を Ubuntu コンテナ内に導入します。",
     };
   }
   const version = pythonRuntimeFromApt(release, index, apt);

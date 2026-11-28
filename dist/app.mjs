@@ -1,9 +1,9 @@
 import catalog from "./runtime-catalog.mjs?v=cpython-source-1";
 import { TARGETS } from "./targets.mjs?v=cpython-source-1";
 import { APT_NAME, inspectApt, loadAptIndex } from "./apt-resolver.mjs?v=cpython-source-1";
-import { dockerfileBlockers, dockerfileHashes, makeDockerfile, pythonRuntimeChoice, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=cpython-source-1";
+import { dockerfileBlockers, dockerfileHashes, makeDockerfile, pythonRuntimeChoice, selectBase, rVersions, PYTHON_RUNTIME } from "./dockerfile.mjs?v=version-labels-1";
 import { PYTHON_NAME, normalizePythonName } from "./python-packaging.mjs?v=dependency-evidence-1";
-import { inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=cpython-source-1";
+import { inspectPythonTarget, pythonVersionChoices } from "./python-investigation.mjs?v=version-labels-1";
 import { PYPI } from "./python-resolver.mjs?v=dependency-evidence-1";
 import { CRAN, PACKAGE_NAME, R_VERSION, UNIVERSE, inspectR } from "./r-resolver.mjs";
 
@@ -352,8 +352,6 @@ function revisions(report) {
     "非撤回の安定版 wheel と公開の Core Metadata を使います。ソース配布物からのビルドと、wheel が使う共有ライブラリの実測は調査範囲外です。",
     "Requires-External が公開されている場合は Ubuntu の候補を表示します。必要に応じて Ubuntu パッケージを直接指定できます。",
     "Dockerfile は仮想環境を作り、各 wheel の URL と SHA-256 を指定して pip で導入し、依存を照合します。",
-    ...(report.base.runtimeMethod === "source" && report.base.pythonSource
-      ? ["CPython は Python.org の公式ソースからビルドし、Ubuntu のシステム Python とは別に導入します。"] : []),
   ];
   reviews.push("APT の固定候補と必須依存の組み合わせを Ubuntu 索引上で確認します。ベースの導入状態と実際の APT による導入は未確認です。");
   if (aptError && language === "r") {
@@ -493,18 +491,9 @@ function baseHint() {
   const node = $("base");
   const chosen = enteredVersion();
   if (selectedLanguage === "python") {
-    if (!PYTHON_RUNTIME.test(chosen)) {
-      node.textContent = "Python 3 の系列またはパッチ版を指定できます。";
-    } else {
-      const runtime = pythonRuntimeChoice(chosen, release);
-      if (runtime.method === "apt") {
-        node.textContent = "Ubuntu の APT 索引で固定できる CPython " + runtime.version + " を使います。";
-      } else if (runtime.source) {
-        node.textContent = "CPython " + runtime.version + " を公式ソースからビルドする Dockerfile を生成できます。";
-      } else {
-        node.textContent = "依存を調査できます。Dockerfile の生成には公式ソースの SHA-256 が必要です。";
-      }
-    }
+    node.textContent = PYTHON_RUNTIME.test(chosen)
+      ? "調査に使う版は Python " + pythonRuntimeChoice(chosen, release).version + " です。"
+      : "Python 3 の系列またはパッチ版を指定できます。";
     return;
   }
   if (!R_VERSION.test(chosen)) {
@@ -535,19 +524,7 @@ function updateLanguageFields(versionValue) {
     option.value = value;
     return option;
   });
-  if (python) {
-    runtimeVersion.replaceChildren(options[0]);
-    const source = element("optgroup");
-    source.label = "公式ソースからビルド";
-    source.append(...options.slice(1, 1 + python.sourceVersions.length));
-    if (source.children.length) runtimeVersion.append(source);
-    const investigation = element("optgroup");
-    investigation.label = "依存調査のみ";
-    investigation.append(...options.slice(1 + python.sourceVersions.length));
-    if (investigation.children.length) runtimeVersion.append(investigation);
-  } else {
-    runtimeVersion.replaceChildren(...options);
-  }
+  runtimeVersion.replaceChildren(...options);
   const other = element("option", "その他のバージョン");
   other.value = "custom";
   runtimeVersion.append(other);
