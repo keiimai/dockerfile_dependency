@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import records from "../dist/build-records.mjs";
+import catalog from "../dist/runtime-catalog.mjs";
 import http from "node:http";
 import {spawn} from "node:child_process";
 import {mkdir,readFile} from "node:fs/promises";
@@ -53,10 +55,15 @@ try {
     await call("Browser.setDownloadBehavior", {behavior:"allow", downloadPath:downloads});
     await call("Page.navigate", {url:new URL("dist/", process.env.PAGES_URL).href});
     await until(() => evaluate("document.querySelector('#r-version')?.options.length > 1"));
-    const enter = async (language, names) => evaluate(`(() => {
+    const enter = async (language, names, version) => evaluate(`(() => {
       const el = id => document.getElementById(id);
       el("language").value = ${JSON.stringify(language)};
       el("language").dispatchEvent(new Event("change", {bubbles:true}));
+      const version = ${JSON.stringify(version ?? "")};
+      if (version) {
+        el("r-version").value = version;
+        el("r-version").dispatchEvent(new Event("change", {bubbles:true}));
+      }
       el("packages").value = ${JSON.stringify(names)};
       el("packages").dispatchEvent(new Event("input", {bubbles:true}));
       el("submit").click();
@@ -67,13 +74,25 @@ try {
     await evaluate("document.getElementById('download-report').click()");
     const report = await until(async () => JSON.parse(await readFile(downloads + "/dependency-report.json","utf8")));
     const archive = report.r.nodes.find(n => n.name === "rbugs").distribution;
-    assert.equal(archive.hashEvidence.reusedVia, "catalog");
-    assert.equal(archive.hashEvidence.method, "cran-archive-catalog");
+    if (archive.repository === "archive") {
+      assert.equal(archive.hashEvidence.reusedVia, "catalog");
+      assert.equal(archive.hashEvidence.method, "cran-archive-catalog");
+    } else {
+      assert.equal(archive.hashEvidence.method, "r-universe-api");
+    }
+    assert.equal(report.buildEvidence, null, "a recorded multi-package R build must not match a single package");
     await evaluate("document.getElementById('download-dockerfile').click()");
     assert((await until(() => readFile(downloads + "/Dockerfile","utf8"))).includes(archive.sha256));
-    await enter("python", "idna");
+    const checked = records.findLast(row => row.scope === "python-runtime" && row.release === "noble" &&
+      row.version === catalog.pythonSeries[row.series] && row.snapshot === catalog.noble.snapshot);
+    assert(checked, "expected a native runtime check for the current snapshot");
+    await enter("python", "idna", checked.series);
     await ready();
     assert(await evaluate("document.getElementById('docker-code').textContent.includes('--hash=sha256:')"));
+    const evidence = await evaluate("document.getElementById('verification-scope').innerText");
+    assert(evidence.includes("CPython " + checked.version + " のビルド・起動を確認"));
+    assert(evidence.includes("入力した Python パッケージの導入は未検証"));
+    assert.equal(await evaluate("document.querySelector('#verification-scope a')?.href"), checked.source);
     console.log("Published Pages: CRAN Archive, PyPI, bundled archive evidence and both download files verified.");
   } else {
     await call("Page.navigate",{url:"http://127.0.0.1:"+server.address().port});
