@@ -18,6 +18,468 @@ export default {
     },
     "snapshot": "20261127T210000Z"
   },
+  "pythonHashEvidence": {
+    "3.10.0": {
+      "checkedAt": "2026-11-28T01:43:34.420674+00:00",
+      "method": "artifact-sha256-after-md5",
+      "source": "https://www.python.org/downloads/release/python-3100/"
+    },
+    "3.10.1": {
+      "checkedAt": "2026-11-28T01:43:33.972598+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.1/Python-3.10.1.tgz.sigstore"
+    },
+    "3.10.10": {
+      "checkedAt": "2026-11-28T01:43:34.005044+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.10/Python-3.10.10.tgz.sigstore"
+    },
+    "3.10.11": {
+      "checkedAt": "2026-11-28T01:43:34.009670+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.11/Python-3.10.11.tgz.sigstore"
+    },
+    "3.10.12": {
+      "checkedAt": "2026-11-28T01:43:33.973130+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.12/Python-3.10.12.tgz.sigstore"
+    },
+    "3.10.13": {
+      "checkedAt": "2026-11-28T01:43:34.005679+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.13/Python-3.10.13.tgz.sigstore"
+    },
+    "3.10.14": {
+      "checkedAt": "2026-11-28T01:43:33.987577+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.14/Python-3.10.14.tgz.sigstore"
+    },
+    "3.10.15": {
+      "checkedAt": "2026-11-28T01:43:33.986819+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.15/Python-3.10.15.tgz.sigstore"
+    },
+    "3.10.16": {
+      "checkedAt": "2026-11-28T01:43:33.999235+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.16/Python-3.10.16.tgz.sigstore"
+    },
+    "3.10.17": {
+      "checkedAt": "2026-11-28T01:43:34.004301+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.17/Python-3.10.17.tgz.sigstore"
+    },
+    "3.10.18": {
+      "checkedAt": "2026-11-28T01:43:34.028106+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.18/Python-3.10.18.tgz.sigstore"
+    },
+    "3.10.19": {
+      "checkedAt": "2026-11-28T01:43:34.020747+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.19/Python-3.10.19.tgz.sigstore"
+    },
+    "3.10.2": {
+      "checkedAt": "2026-11-28T01:43:34.380982+00:00",
+      "method": "artifact-sha256-after-md5",
+      "source": "https://www.python.org/downloads/release/python-3102/"
+    },
+    "3.10.20": {
+      "checkedAt": "2026-11-28T01:43:34.019966+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.20/Python-3.10.20.tgz.sigstore"
+    },
+    "3.10.21": {
+      "checkedAt": "2026-11-28T01:43:34.023412+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.21/Python-3.10.21.tgz.sigstore"
+    },
+    "3.10.22": {
+      "checkedAt": "2026-11-28T01:43:34.032679+00:00",
+      "method": "python-release-sha256",
+      "source": "https://www.python.org/downloads/release/python-31022/"
+    },
+    "3.10.3": {
+      "checkedAt": "2026-11-28T01:43:34.448385+00:00",
+      "method": "artifact-sha256-after-md5",
+      "source": "https://www.python.org/downloads/release/python-3103/"
+    },
+    "3.10.4": {
+      "checkedAt": "2026-11-28T01:43:34.446168+00:00",
+      "method": "artifact-sha256-after-md5",
+      "source": "https://www.python.org/downloads/release/python-3104/"
+    },
+    "3.10.5": {
+      "checkedAt": "2026-11-28T01:43:34.473492+00:00",
+      "method": "artifact-sha256-after-md5",
+      "source": "https://www.python.org/downloads/release/python-3105/"
+    },
+    "3.10.6": {
+      "checkedAt": "2026-11-28T01:43:34.476928+00:00",
+      "method": "artifact-sha256-after-md5",
+      "source": "https://www.python.org/downloads/release/python-3106/"
+    },
+    "3.10.7": {
+      "checkedAt": "2026-11-28T01:43:34.399871+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.7/Python-3.10.7.tgz.sigstore"
+    },
+    "3.10.8": {
+      "checkedAt": "2026-11-28T01:43:34.415833+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.8/Python-3.10.8.tgz.sigstore"
+    },
+    "3.10.9": {
+      "checkedAt": "2026-11-28T01:43:34.433844+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.10.9/Python-3.10.9.tgz.sigstore"
+    },
+    "3.11.0": {
+      "checkedAt": "2026-11-28T01:43:34.464999+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.0/Python-3.11.0.tgz.sigstore"
+    },
+    "3.11.1": {
+      "checkedAt": "2026-11-28T01:43:34.452731+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.1/Python-3.11.1.tgz.sigstore"
+    },
+    "3.11.10": {
+      "checkedAt": "2026-11-28T01:43:34.481113+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.10/Python-3.11.10.tgz.sigstore"
+    },
+    "3.11.11": {
+      "checkedAt": "2026-11-28T01:43:34.462043+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.11/Python-3.11.11.tgz.sigstore"
+    },
+    "3.11.12": {
+      "checkedAt": "2026-11-28T01:43:34.465529+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.12/Python-3.11.12.tgz.sigstore"
+    },
+    "3.11.13": {
+      "checkedAt": "2026-11-28T01:43:34.475924+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.13/Python-3.11.13.tgz.sigstore"
+    },
+    "3.11.14": {
+      "checkedAt": "2026-11-28T01:43:34.476181+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.14/Python-3.11.14.tgz.sigstore"
+    },
+    "3.11.15": {
+      "checkedAt": "2026-11-28T01:43:34.483194+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.15/Python-3.11.15.tgz.sigstore"
+    },
+    "3.11.16": {
+      "checkedAt": "2026-11-28T01:43:34.490466+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.16/Python-3.11.16.tgz.sigstore"
+    },
+    "3.11.17": {
+      "checkedAt": "2026-11-28T01:43:34.489353+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.17/Python-3.11.17.tgz.sigstore"
+    },
+    "3.11.18": {
+      "checkedAt": "2026-11-28T01:43:34.487427+00:00",
+      "method": "python-release-sha256",
+      "source": "https://www.python.org/downloads/release/python-31118/"
+    },
+    "3.11.2": {
+      "checkedAt": "2026-11-28T01:43:34.488965+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.2/Python-3.11.2.tgz.sigstore"
+    },
+    "3.11.3": {
+      "checkedAt": "2026-11-28T01:43:34.498372+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.3/Python-3.11.3.tgz.sigstore"
+    },
+    "3.11.4": {
+      "checkedAt": "2026-11-28T01:43:34.495390+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.4/Python-3.11.4.tgz.sigstore"
+    },
+    "3.11.5": {
+      "checkedAt": "2026-11-28T01:43:34.497240+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.5/Python-3.11.5.tgz.sigstore"
+    },
+    "3.11.6": {
+      "checkedAt": "2026-11-28T01:43:34.500230+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.6/Python-3.11.6.tgz.sigstore"
+    },
+    "3.11.7": {
+      "checkedAt": "2026-11-28T01:43:34.499413+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.7/Python-3.11.7.tgz.sigstore"
+    },
+    "3.11.8": {
+      "checkedAt": "2026-11-28T01:43:34.503010+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.8/Python-3.11.8.tgz.sigstore"
+    },
+    "3.11.9": {
+      "checkedAt": "2026-11-28T01:43:34.504970+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz.sigstore"
+    },
+    "3.12.0": {
+      "checkedAt": "2026-11-28T01:43:34.506892+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.0/Python-3.12.0.tgz.sigstore"
+    },
+    "3.12.1": {
+      "checkedAt": "2026-11-28T01:43:34.508655+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tgz.sigstore"
+    },
+    "3.12.10": {
+      "checkedAt": "2026-11-28T01:43:34.508145+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.10/Python-3.12.10.tgz.sigstore"
+    },
+    "3.12.11": {
+      "checkedAt": "2026-11-28T01:43:34.513305+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.11/Python-3.12.11.tgz.sigstore"
+    },
+    "3.12.12": {
+      "checkedAt": "2026-11-28T01:43:34.516844+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.12/Python-3.12.12.tgz.sigstore"
+    },
+    "3.12.13": {
+      "checkedAt": "2026-11-28T01:43:34.517637+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.13/Python-3.12.13.tgz.sigstore"
+    },
+    "3.12.14": {
+      "checkedAt": "2026-11-28T01:43:34.517293+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.14/Python-3.12.14.tgz.sigstore"
+    },
+    "3.12.15": {
+      "checkedAt": "2026-11-28T01:43:34.520163+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.15/Python-3.12.15.tgz.sigstore"
+    },
+    "3.12.16": {
+      "checkedAt": "2026-11-28T01:43:34.518357+00:00",
+      "method": "python-release-sha256",
+      "source": "https://www.python.org/downloads/release/python-31216/"
+    },
+    "3.12.2": {
+      "checkedAt": "2026-11-28T01:43:34.523390+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.2/Python-3.12.2.tgz.sigstore"
+    },
+    "3.12.3": {
+      "checkedAt": "2026-11-28T01:43:34.528695+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz.sigstore"
+    },
+    "3.12.4": {
+      "checkedAt": "2026-11-28T01:43:34.528292+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.4/Python-3.12.4.tgz.sigstore"
+    },
+    "3.12.5": {
+      "checkedAt": "2026-11-28T01:43:34.533355+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.5/Python-3.12.5.tgz.sigstore"
+    },
+    "3.12.6": {
+      "checkedAt": "2026-11-28T01:43:34.530569+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.6/Python-3.12.6.tgz.sigstore"
+    },
+    "3.12.7": {
+      "checkedAt": "2026-11-28T01:43:34.534859+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.7/Python-3.12.7.tgz.sigstore"
+    },
+    "3.12.8": {
+      "checkedAt": "2026-11-28T01:43:34.536003+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.8/Python-3.12.8.tgz.sigstore"
+    },
+    "3.12.9": {
+      "checkedAt": "2026-11-28T01:43:34.540071+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.12.9/Python-3.12.9.tgz.sigstore"
+    },
+    "3.13.0": {
+      "checkedAt": "2026-11-28T01:43:34.538601+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.0/Python-3.13.0.tgz.sigstore"
+    },
+    "3.13.1": {
+      "checkedAt": "2026-11-28T01:43:34.547311+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.1/Python-3.13.1.tgz.sigstore"
+    },
+    "3.13.10": {
+      "checkedAt": "2026-11-28T01:43:34.548427+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.10/Python-3.13.10.tgz.sigstore"
+    },
+    "3.13.11": {
+      "checkedAt": "2026-11-28T01:43:34.545369+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.11/Python-3.13.11.tgz.sigstore"
+    },
+    "3.13.12": {
+      "checkedAt": "2026-11-28T01:43:34.546337+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.12/Python-3.13.12.tgz.sigstore"
+    },
+    "3.13.13": {
+      "checkedAt": "2026-11-28T01:43:34.548185+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.13/Python-3.13.13.tgz.sigstore"
+    },
+    "3.13.14": {
+      "checkedAt": "2026-11-28T01:43:34.551116+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tgz.sigstore"
+    },
+    "3.13.15": {
+      "checkedAt": "2026-11-28T01:43:34.557540+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tgz.sigstore"
+    },
+    "3.13.16": {
+      "checkedAt": "2026-11-28T01:43:34.555467+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tgz.sigstore"
+    },
+    "3.13.17": {
+      "checkedAt": "2026-11-28T01:43:34.563524+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.17/Python-3.13.17.tgz.sigstore"
+    },
+    "3.13.18": {
+      "checkedAt": "2026-11-28T01:43:34.566808+00:00",
+      "method": "python-release-sha256",
+      "source": "https://www.python.org/downloads/release/python-31318/"
+    },
+    "3.13.2": {
+      "checkedAt": "2026-11-28T01:43:34.559365+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.2/Python-3.13.2.tgz.sigstore"
+    },
+    "3.13.3": {
+      "checkedAt": "2026-11-28T01:43:34.560771+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.3/Python-3.13.3.tgz.sigstore"
+    },
+    "3.13.4": {
+      "checkedAt": "2026-11-28T01:43:34.567598+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.4/Python-3.13.4.tgz.sigstore"
+    },
+    "3.13.5": {
+      "checkedAt": "2026-11-28T01:43:34.567744+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.5/Python-3.13.5.tgz.sigstore"
+    },
+    "3.13.6": {
+      "checkedAt": "2026-11-28T01:43:34.568814+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.6/Python-3.13.6.tgz.sigstore"
+    },
+    "3.13.7": {
+      "checkedAt": "2026-11-28T01:43:34.570505+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.7/Python-3.13.7.tgz.sigstore"
+    },
+    "3.13.8": {
+      "checkedAt": "2026-11-28T01:43:34.573345+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.8/Python-3.13.8.tgz.sigstore"
+    },
+    "3.13.9": {
+      "checkedAt": "2026-11-28T01:43:34.583601+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.13.9/Python-3.13.9.tgz.sigstore"
+    },
+    "3.14.0": {
+      "checkedAt": "2026-11-28T01:43:34.578449+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.0/Python-3.14.0.tgz.sigstore"
+    },
+    "3.14.1": {
+      "checkedAt": "2026-11-28T01:43:34.579178+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.1/Python-3.14.1.tgz.sigstore"
+    },
+    "3.14.10": {
+      "checkedAt": "2026-11-28T01:43:34.581746+00:00",
+      "method": "python-release-sha256",
+      "source": "https://www.python.org/downloads/release/python-31410/"
+    },
+    "3.14.2": {
+      "checkedAt": "2026-11-28T01:43:34.581086+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.2/Python-3.14.2.tgz.sigstore"
+    },
+    "3.14.3": {
+      "checkedAt": "2026-11-28T01:43:34.584180+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz.sigstore"
+    },
+    "3.14.4": {
+      "checkedAt": "2026-11-28T01:43:34.588823+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.4/Python-3.14.4.tgz.sigstore"
+    },
+    "3.14.5": {
+      "checkedAt": "2026-11-28T01:43:34.590324+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.5/Python-3.14.5.tgz.sigstore"
+    },
+    "3.14.6": {
+      "checkedAt": "2026-11-28T01:43:34.592818+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.6/Python-3.14.6.tgz.sigstore"
+    },
+    "3.14.7": {
+      "checkedAt": "2026-11-28T01:43:34.591382+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tgz.sigstore"
+    },
+    "3.14.8": {
+      "checkedAt": "2026-11-28T01:43:34.594060+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tgz.sigstore"
+    },
+    "3.14.9": {
+      "checkedAt": "2026-11-28T01:43:34.595681+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.14.9/Python-3.14.9.tgz.sigstore"
+    },
+    "3.15.0": {
+      "checkedAt": "2026-11-28T01:43:34.598747+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.15.0/Python-3.15.0.tgz.sigstore"
+    },
+    "3.15.1": {
+      "checkedAt": "2026-11-28T01:43:34.600260+00:00",
+      "method": "sigstore-declared-digest",
+      "source": "https://www.python.org/ftp/python/3.15.1/Python-3.15.1.tgz.sigstore"
+    },
+    "3.15.2": {
+      "checkedAt": "2026-11-28T01:43:34.602461+00:00",
+      "method": "python-release-sha256",
+      "source": "https://www.python.org/downloads/release/python-3152/"
+    }
+  },
   "pythonSeries": {
     "3.10": "3.10.22",
     "3.11": "3.11.18",
